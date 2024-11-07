@@ -1,0 +1,4938 @@
+---
+ arch/Kconfig                                  |  19 +-
+ arch/arm64/Kconfig                            |  27 +-
+ arch/arm64/include/asm/module.h               |   3 +
+ arch/arm64/include/asm/randmod.h              |  32 +
+ arch/arm64/kernel/Makefile                    |   3 +
+ arch/arm64/kernel/corevariant-plts.c          |  85 +++
+ arch/arm64/kernel/module-corevariant.c        | 438 ++++++++++++
+ arch/arm64/kernel/module-internal.h           |  32 +
+ arch/arm64/kernel/module.c                    |  27 +
+ block/Makefile                                |   3 +
+ include/linux/compiler-gcc.h                  |   4 +
+ include/linux/module.h                        |   5 +
+ include/linux/module_corevariant.h            | 111 ++++
+ include/linux/sched.h                         |  10 +
+ init/Kconfig                                  |  13 +
+ kernel/Makefile                               |   5 +
+ kernel/corevariant-init.c                     |  83 +++
+ kernel/corevariant-internal.h                 |  32 +
+ kernel/corevariant.c                          | 622 ++++++++++++++++++
+ kernel/module-internal.h                      |   8 +
+ kernel/module.c                               | 138 ++++
+ kernel/randmod.c                              | 470 +++++++++++++
+ kernel/randmod_utils.c                        | 225 +++++++
+ kernel/sched/core.c                           |   3 +
+ kernel/sched/fair.c                           |  92 +++
+ lib/Kconfig.debug                             |  22 +
+ lib/Makefile                                  |   2 +
+ lib/corevariant_debug.c                       |  28 +
+ samples/Kconfig                               |   9 +
+ samples/Makefile                              |   2 +
+ samples/randmod/Makefile                      |   1 +
+ samples/randmod/randmod_test.c                | 150 +++++
+ samples/rerandomizable_lkm/Makefile           |  12 +
+ samples/rerandomizable_lkm/rerandom_driver.h  |  13 +
+ samples/rerandomizable_lkm/test_driver.c      |  99 +++
+ samples/rerandomizable_lkm/test_gcc_plugin1.c |  71 ++
+ samples/rerandomizable_lkm/test_gcc_plugin2.c |  51 ++
+ samples/rerandomizable_lkm/test_kthread.c     |  99 +++
+ scripts/Makefile.gcc-plugins                  |  11 +-
+ scripts/Makefile.modfinal                     |  25 +-
+ scripts/gcc-plugins/Kconfig                   |   7 +
+ scripts/gcc-plugins/gcc-common.h              |   4 +-
+ scripts/gcc-plugins/rerandom.h                |  55 ++
+ scripts/gcc-plugins/trampoline_plugin.c       | 360 ++++++++++
+ .../gcc-plugins/trampoline_plugin_legacy.c    | 489 ++++++++++++++
+ scripts/gdb/linux/cpus.py                     |  23 +-
+ scripts/gdb/linux/dmesg.py                    |  42 +-
+ scripts/gdb/linux/symbols.py                  |  14 +-
+ scripts/gdb/linux/utils.py                    |  14 +-
+ scripts/module_fg.lds.S                       |  11 +
+ 50 files changed, 4059 insertions(+), 45 deletions(-)
+ create mode 100644 arch/arm64/include/asm/randmod.h
+ create mode 100644 arch/arm64/kernel/corevariant-plts.c
+ create mode 100644 arch/arm64/kernel/module-corevariant.c
+ create mode 100644 arch/arm64/kernel/module-internal.h
+ create mode 100644 include/linux/module_corevariant.h
+ create mode 100644 kernel/corevariant-init.c
+ create mode 100644 kernel/corevariant-internal.h
+ create mode 100644 kernel/corevariant.c
+ create mode 100644 kernel/randmod.c
+ create mode 100644 kernel/randmod_utils.c
+ create mode 100644 lib/corevariant_debug.c
+ create mode 100644 samples/randmod/Makefile
+ create mode 100644 samples/randmod/randmod_test.c
+ create mode 100644 samples/rerandomizable_lkm/Makefile
+ create mode 100644 samples/rerandomizable_lkm/rerandom_driver.h
+ create mode 100644 samples/rerandomizable_lkm/test_driver.c
+ create mode 100644 samples/rerandomizable_lkm/test_gcc_plugin1.c
+ create mode 100644 samples/rerandomizable_lkm/test_gcc_plugin2.c
+ create mode 100644 samples/rerandomizable_lkm/test_kthread.c
+ create mode 100644 scripts/gcc-plugins/rerandom.h
+ create mode 100644 scripts/gcc-plugins/trampoline_plugin.c
+ create mode 100644 scripts/gcc-plugins/trampoline_plugin_legacy.c
+
+diff --git a/arch/Kconfig b/arch/Kconfig
+index e8621d047004..3edc6bebfd02 100644
+--- a/arch/Kconfig
++++ b/arch/Kconfig
+@@ -632,21 +632,22 @@ config STACKPROTECTOR_STRONG
+ config ARCH_SUPPORTS_SHADOW_CALL_STACK
+ 	bool
+ 	help
+-	  An architecture should select this if it supports Clang's Shadow
+-	  Call Stack and implements runtime support for shadow stack
++	  An architecture should select this if it supports the compiler's
++	  Shadow Call Stack and implements runtime support for shadow stack
+ 	  switching.
+ 
+ config SHADOW_CALL_STACK
+-	bool "Clang Shadow Call Stack"
+-	depends on CC_IS_CLANG && ARCH_SUPPORTS_SHADOW_CALL_STACK
++	bool "Shadow Call Stack"
++	depends on ARCH_SUPPORTS_SHADOW_CALL_STACK
+ 	depends on DYNAMIC_FTRACE_WITH_REGS || !FUNCTION_GRAPH_TRACER
+ 	help
+-	  This option enables Clang's Shadow Call Stack, which uses a
+-	  shadow stack to protect function return addresses from being
+-	  overwritten by an attacker. More information can be found in
+-	  Clang's documentation:
++	  This option enables the compiler's Shadow Call Stack, which
++	  uses a shadow stack to protect function return addresses from
++	  being overwritten by an attacker. More information can be found
++	  in the compiler's documentation:
+ 
+-	    https://clang.llvm.org/docs/ShadowCallStack.html
++	  - Clang: https://clang.llvm.org/docs/ShadowCallStack.html
++	  - GCC: https://gcc.gnu.org/onlinedocs/gcc/Instrumentation-Options.html#Instrumentation-Options
+ 
+ 	  Note that security guarantees in the kernel differ from the
+ 	  ones documented for user space. The kernel must store addresses
+diff --git a/arch/arm64/Kconfig b/arch/arm64/Kconfig
+index 9a238d088245..884946a42b37 100644
+--- a/arch/arm64/Kconfig
++++ b/arch/arm64/Kconfig
+@@ -362,8 +362,33 @@ source "arch/arm64/Kconfig.platforms"
+ 
+ source "kernel/livepatch/Kconfig"
+ 
++config ARM64_MODULE_COREVARIANT
++	def_bool n
++	select ARM64_MODULE_COREVARIANT_RELOCATE
++
++config ARM64_MODULE_COREVARIANT_RELOCATE
++	def_bool n
++	depends on ARM64_MODULE_COREVARIANT
++	select ARM64_MODULE_COREVARIANT_PLT
++
++config ARM64_MODULE_COREVARIANT_PLT
++	def_bool n
++	depends on ARM64_MODULE_COREVARIANT_RELOCATE
++
++config ARM64_RERANDOM_SUPPORT
++	def_bool n
++	select MODULE_SETUP_CVINFO
++	select ARM64_MODULE_COREVARIANT
++
+ menu "Kernel Features"
+ 
++config ARM64_RANDOM_MODULE
++	tristate "Randomize kernel module support."
++	default m
++	depends on MODULE_FG_KASLR
++	select ARM64_RERANDOM_SUPPORT
++	select RANDMOD_SAMPLE_KO
++
+ menu "ARM errata workarounds via the alternatives framework"
+ 
+ config ARM64_WORKAROUND_CLEAN_CACHE
+@@ -1216,7 +1241,7 @@ config ARCH_HAS_MC_EXTABLE
+ config ARCH_ENABLE_SPLIT_PMD_PTLOCK
+ 	def_bool y if PGTABLE_LEVELS > 2
+ 
+-# Supported by clang >= 7.0
++# Supported by clang >= 7.0 or GCC >= 12.0.0
+ config CC_HAVE_SHADOW_CALL_STACK
+ 	def_bool $(cc-option, -fsanitize=shadow-call-stack -ffixed-x18)
+ 
+diff --git a/arch/arm64/include/asm/module.h b/arch/arm64/include/asm/module.h
+index 4e7fa2623896..68e0de5afba7 100644
+--- a/arch/arm64/include/asm/module.h
++++ b/arch/arm64/include/asm/module.h
+@@ -6,6 +6,9 @@
+ #define __ASM_MODULE_H
+ 
+ #include <asm-generic/module.h>
++#ifdef CONFIG_ARM64_RERANDOM_SUPPORT
++#include "randmod.h"
++#endif
+ 
+ #ifdef CONFIG_ARM64_MODULE_PLTS
+ struct mod_plt_sec {
+diff --git a/arch/arm64/include/asm/randmod.h b/arch/arm64/include/asm/randmod.h
+new file mode 100644
+index 000000000000..ecad881f6791
+--- /dev/null
++++ b/arch/arm64/include/asm/randmod.h
+@@ -0,0 +1,32 @@
++#ifndef __ASM_RANDMOD_H
++#define __ASM_RANDMOD_H
++
++#include "linux/types.h"
++#include <linux/module.h>
++
++#define MAX_RANDMOD_MODULES 10
++#define MODULE_NAME_LEN MAX_PARAM_PREFIX_LEN
++
++// names of modules maneged by randmod
++extern char rand_modules[MAX_RANDMOD_MODULES][MODULE_NAME_LEN];
++// num of modules managed by randmod
++extern int module_count;
++// every rerandmoize module have a randmod thread list
++extern struct list_head randmod_thread_list[MAX_RANDMOD_MODULES];
++// lock for operating each list
++extern spinlock_t randmod_thread_lock;
++// variable used to indicate index of module doing rerandomizing
++extern volatile int randomize_module_index;
++
++int find_module_index_by_name(const char *name);
++void add_rand_curr(const struct module *mod);
++void del_rand_curr(const struct module *mod);
++
++struct corevariant;
++
++extern int replace_retaddr(struct task_struct *tsk,
++			   const struct corevariant *old,
++			   const struct corevariant *new);
++
++#endif /* __ASM_RANDMOD_H */
++
+diff --git a/arch/arm64/kernel/Makefile b/arch/arm64/kernel/Makefile
+index 05f0ed3ad1d8..d538160088e7 100644
+--- a/arch/arm64/kernel/Makefile
++++ b/arch/arm64/kernel/Makefile
+@@ -84,3 +84,6 @@ extra-y					+= $(head-y) vmlinux.lds
+ ifeq ($(CONFIG_DEBUG_EFI),y)
+ AFLAGS_head.o += -DVMLINUX_PATH="\"$(realpath $(objtree)/vmlinux)\""
+ endif
++
++obj-$(CONFIG_ARM64_MODULE_COREVARIANT_RELOCATE)		+= module-corevariant.o
++obj-$(CONFIG_ARM64_MODULE_COREVARIANT_PLT)		+= corevariant-plts.o
+\ No newline at end of file
+diff --git a/arch/arm64/kernel/corevariant-plts.c b/arch/arm64/kernel/corevariant-plts.c
+new file mode 100644
+index 000000000000..569659b0e53a
+--- /dev/null
++++ b/arch/arm64/kernel/corevariant-plts.c
+@@ -0,0 +1,85 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * corevariant-plts.c: functions to get and emit PLT entries.
++ * based on module-plts.c: Copyright (C) 2014-2017 Linaro Ltd. <ard.biesheuvel@linaro.org>
++ */
++
++#include "linux/module_corevariant.h"
++#include <linux/elf.h>
++#include <linux/ftrace.h>
++#include <linux/kernel.h>
++#include <linux/module.h>
++#include <linux/sort.h>
++
++u64 corevariant_emit_plt_entry(struct corevariant *cv, Elf64_Shdr *sechdrs,
++			       void *loc, const Elf64_Rela *rela,
++			       Elf64_Sym *sym)
++{
++	struct mod_plt_sec *pltsec = &cv->pltsec;
++	struct plt_entry *plt = (struct plt_entry *)sechdrs[pltsec->plt_shndx].sh_addr;
++	int i = pltsec->plt_num_entries;
++	int j = i - 1;
++	u64 val = sym->st_value + rela->r_addend;
++
++	if (is_forbidden_offset_for_adrp(&plt[i].adrp))
++		i++;
++
++	plt[i] = get_plt_entry(val, &plt[i]);
++
++	/*
++	 * Check if the entry we just created is a duplicate. Given that the
++	 * relocations are sorted, this will be the last entry we allocated.
++	 * (if one exists).
++	 */
++	if (j >= 0 && plt_entries_equal(plt + i, plt + j))
++		return (u64)&plt[j];
++
++	pltsec->plt_num_entries += i - j;
++	if (WARN_ON(pltsec->plt_num_entries > pltsec->plt_max_entries))
++		return 0;
++
++	return (u64)&plt[i];
++}
++
++static struct plt_entry __get_adrp_add_pair(u64 dst, u64 pc,
++					    enum aarch64_insn_register reg)
++{
++	u32 adrp, add;
++
++	adrp = aarch64_insn_gen_adr(pc, dst, reg, AARCH64_INSN_ADR_TYPE_ADRP);
++	add = aarch64_insn_gen_add_sub_imm(reg, reg, dst % SZ_4K,
++					   AARCH64_INSN_VARIANT_64BIT,
++					   AARCH64_INSN_ADSB_ADD);
++
++	return (struct plt_entry){ cpu_to_le32(adrp), cpu_to_le32(add) };
++}
++
++#ifdef CONFIG_ARM64_ERRATUM_843419
++u64 corevariant_emit_veneer_for_adrp(struct corevariant *cv,
++				     Elf64_Shdr *sechdrs, void *loc, u64 val)
++{
++	struct mod_plt_sec *pltsec = &cv->pltsec;
++	struct plt_entry *plt = (struct plt_entry *)sechdrs[pltsec->plt_shndx].sh_addr;
++	int i = pltsec->plt_num_entries++;
++	u32 br;
++	int rd;
++
++	if (WARN_ON(pltsec->plt_num_entries > pltsec->plt_max_entries))
++		return 0;
++
++	if (is_forbidden_offset_for_adrp(&plt[i].adrp))
++		i = pltsec->plt_num_entries++;
++
++	/* get the destination register of the ADRP instruction */
++	rd = aarch64_insn_decode_register(AARCH64_INSN_REGTYPE_RD,
++					  le32_to_cpup((__le32 *)loc));
++
++	br = aarch64_insn_gen_branch_imm((u64)&plt[i].br, (u64)loc + 4,
++					 AARCH64_INSN_BRANCH_NOLINK);
++
++	plt[i] = __get_adrp_add_pair(val, (u64)&plt[i], rd);
++	plt[i].br = cpu_to_le32(br);
++
++	return (u64)&plt[i];
++}
++#endif
+diff --git a/arch/arm64/kernel/module-corevariant.c b/arch/arm64/kernel/module-corevariant.c
+new file mode 100644
+index 000000000000..1ccbdc0ed85f
+--- /dev/null
++++ b/arch/arm64/kernel/module-corevariant.c
+@@ -0,0 +1,438 @@
++// SPDX-License-Identifier: GPL-2.0-only
++#include <asm/alternative.h>
++#include <linux/printk.h>
++#include <linux/module_corevariant.h>
++#include "module-internal.h"
++
++static int corevariant_reloc_insn_adrp(struct corevariant *cv, Elf64_Shdr *sechdrs,
++				       __le32 *place, u64 val)
++{
++	u32 insn;
++
++	if (!is_forbidden_offset_for_adrp(place))
++		return corevariant_reloc_insn_imm(RELOC_OP_PAGE, place, val, 12, 21,
++				      AARCH64_INSN_IMM_ADR);
++
++	/* patch ADRP to ADR if it is in range */
++	if (!corevariant_reloc_insn_imm(RELOC_OP_PREL, place, val & ~0xfff, 0, 21,
++			    AARCH64_INSN_IMM_ADR)) {
++		insn = le32_to_cpu(*place);
++		insn &= ~BIT(31);
++	} else {
++		/* out of range for ADR -> emit a veneer */
++		val = corevariant_emit_veneer_for_adrp(cv, sechdrs, place, val & ~0xfff);
++		if (!val)
++			return -ENOEXEC;
++		insn = aarch64_insn_gen_branch_imm((u64)place, val,
++						   AARCH64_INSN_BRANCH_NOLINK);
++	}
++
++	*place = cpu_to_le32(insn);
++	return 0;
++}
++
++/* exactly same with relocation for module, but something in plt emitting is different. */
++int apply_relocate_corevariant(Elf_Shdr *sechdrs, const char *strtab,
++			       Elf_Sym *symtab, unsigned int relsec,
++			       struct corevariant *cv)
++{
++	unsigned int i;
++	int ovf;
++	bool overflow_check;
++	Elf64_Sym *sym;
++	void *loc;
++	u64 val;
++	Elf64_Rela *rel = (void *)sechdrs[relsec].sh_addr;
++	struct module *mod = cv->mod;
++	const char *symname;
++
++	for (i = 0; i < sechdrs[relsec].sh_size / sizeof(*rel); i++) {
++		/* loc corresponds to P in the AArch64 ELF document. */
++		loc = (void *)sechdrs[sechdrs[relsec].sh_info].sh_addr
++			+ rel[i].r_offset;
++
++		/* sym is the ELF symbol we're referring to. */
++		sym = symtab + ELF64_R_SYM(rel[i].r_info);
++
++		/* val corresponds to (S + A) in the AArch64 ELF document. */
++		val = sym->st_value + rel[i].r_addend;
++
++		/* Check for overflow by default. */
++		overflow_check = true;
++
++		symname = strtab + sym->st_name;
++		if (symname[0] == '$' && strchr("axtd", symname[1]) &&
++		    (symname[2] == '\0' || symname[2] == '.'))
++			pr_warn("detect relocation with mapping symbol: relsec %d idx %d.\n",
++				relsec, i);
++		if (!within_corevariant((unsigned long)loc, cv))
++			pr_warn("reloc loc out of corevariant: relsec %d idx %d.\n", relsec, i);
++
++		/* Perform the static relocation. */
++		switch (ELF64_R_TYPE(rel[i].r_info)) {
++		/* Null relocations. */
++		case R_ARM_NONE:
++		case R_AARCH64_NONE:
++			ovf = 0;
++			break;
++
++		/* Data relocations. */
++		case R_AARCH64_ABS64:
++			overflow_check = false;
++			ovf = corevariant_reloc_data(RELOC_OP_ABS, loc, val, 64);
++			break;
++		case R_AARCH64_ABS32:
++			ovf = corevariant_reloc_data(RELOC_OP_ABS, loc, val, 32);
++			break;
++		case R_AARCH64_ABS16:
++			ovf = corevariant_reloc_data(RELOC_OP_ABS, loc, val, 16);
++			break;
++		case R_AARCH64_PREL64:
++			overflow_check = false;
++			ovf = corevariant_reloc_data(RELOC_OP_PREL, loc, val, 64);
++			break;
++		case R_AARCH64_PREL32:
++			ovf = corevariant_reloc_data(RELOC_OP_PREL, loc, val, 32);
++			break;
++		case R_AARCH64_PREL16:
++			ovf = corevariant_reloc_data(RELOC_OP_PREL, loc, val, 16);
++			break;
++
++		/* MOVW instruction relocations. */
++		case R_AARCH64_MOVW_UABS_G0_NC:
++			overflow_check = false;
++			fallthrough;
++		case R_AARCH64_MOVW_UABS_G0:
++			ovf = corevariant_reloc_insn_movw(RELOC_OP_ABS, loc, val, 0,
++					      AARCH64_INSN_IMM_MOVKZ);
++			break;
++		case R_AARCH64_MOVW_UABS_G1_NC:
++			overflow_check = false;
++			fallthrough;
++		case R_AARCH64_MOVW_UABS_G1:
++			ovf = corevariant_reloc_insn_movw(RELOC_OP_ABS, loc, val, 16,
++					      AARCH64_INSN_IMM_MOVKZ);
++			break;
++		case R_AARCH64_MOVW_UABS_G2_NC:
++			overflow_check = false;
++			fallthrough;
++		case R_AARCH64_MOVW_UABS_G2:
++			ovf = corevariant_reloc_insn_movw(RELOC_OP_ABS, loc, val, 32,
++					      AARCH64_INSN_IMM_MOVKZ);
++			break;
++		case R_AARCH64_MOVW_UABS_G3:
++			/* We're using the top bits so we can't overflow. */
++			overflow_check = false;
++			ovf = corevariant_reloc_insn_movw(RELOC_OP_ABS, loc, val, 48,
++					      AARCH64_INSN_IMM_MOVKZ);
++			break;
++		case R_AARCH64_MOVW_SABS_G0:
++			ovf = corevariant_reloc_insn_movw(RELOC_OP_ABS, loc, val, 0,
++					      AARCH64_INSN_IMM_MOVNZ);
++			break;
++		case R_AARCH64_MOVW_SABS_G1:
++			ovf = corevariant_reloc_insn_movw(RELOC_OP_ABS, loc, val, 16,
++					      AARCH64_INSN_IMM_MOVNZ);
++			break;
++		case R_AARCH64_MOVW_SABS_G2:
++			ovf = corevariant_reloc_insn_movw(RELOC_OP_ABS, loc, val, 32,
++					      AARCH64_INSN_IMM_MOVNZ);
++			break;
++		case R_AARCH64_MOVW_PREL_G0_NC:
++			overflow_check = false;
++			ovf = corevariant_reloc_insn_movw(RELOC_OP_PREL, loc, val, 0,
++					      AARCH64_INSN_IMM_MOVKZ);
++			break;
++		case R_AARCH64_MOVW_PREL_G0:
++			ovf = corevariant_reloc_insn_movw(RELOC_OP_PREL, loc, val, 0,
++					      AARCH64_INSN_IMM_MOVNZ);
++			break;
++		case R_AARCH64_MOVW_PREL_G1_NC:
++			overflow_check = false;
++			ovf = corevariant_reloc_insn_movw(RELOC_OP_PREL, loc, val, 16,
++					      AARCH64_INSN_IMM_MOVKZ);
++			break;
++		case R_AARCH64_MOVW_PREL_G1:
++			ovf = corevariant_reloc_insn_movw(RELOC_OP_PREL, loc, val, 16,
++					      AARCH64_INSN_IMM_MOVNZ);
++			break;
++		case R_AARCH64_MOVW_PREL_G2_NC:
++			overflow_check = false;
++			ovf = corevariant_reloc_insn_movw(RELOC_OP_PREL, loc, val, 32,
++					      AARCH64_INSN_IMM_MOVKZ);
++			break;
++		case R_AARCH64_MOVW_PREL_G2:
++			ovf = corevariant_reloc_insn_movw(RELOC_OP_PREL, loc, val, 32,
++					      AARCH64_INSN_IMM_MOVNZ);
++			break;
++		case R_AARCH64_MOVW_PREL_G3:
++			/* We're using the top bits so we can't overflow. */
++			overflow_check = false;
++			ovf = corevariant_reloc_insn_movw(RELOC_OP_PREL, loc, val, 48,
++					      AARCH64_INSN_IMM_MOVNZ);
++			break;
++
++		/* Immediate instruction relocations. */
++		case R_AARCH64_LD_PREL_LO19:
++			ovf = corevariant_reloc_insn_imm(RELOC_OP_PREL, loc, val, 2, 19,
++					     AARCH64_INSN_IMM_19);
++			break;
++		case R_AARCH64_ADR_PREL_LO21:
++			ovf = corevariant_reloc_insn_imm(RELOC_OP_PREL, loc, val, 0, 21,
++					     AARCH64_INSN_IMM_ADR);
++			break;
++		case R_AARCH64_ADR_PREL_PG_HI21_NC:
++			overflow_check = false;
++			fallthrough;
++		case R_AARCH64_ADR_PREL_PG_HI21:
++			ovf = corevariant_reloc_insn_adrp(cv, sechdrs, loc, val);
++			if (ovf && ovf != -ERANGE)
++				return ovf;
++			break;
++		case R_AARCH64_ADD_ABS_LO12_NC:
++		case R_AARCH64_LDST8_ABS_LO12_NC:
++			overflow_check = false;
++			ovf = corevariant_reloc_insn_imm(RELOC_OP_ABS, loc, val, 0, 12,
++					     AARCH64_INSN_IMM_12);
++			break;
++		case R_AARCH64_LDST16_ABS_LO12_NC:
++			overflow_check = false;
++			ovf = corevariant_reloc_insn_imm(RELOC_OP_ABS, loc, val, 1, 11,
++					     AARCH64_INSN_IMM_12);
++			break;
++		case R_AARCH64_LDST32_ABS_LO12_NC:
++			overflow_check = false;
++			ovf = corevariant_reloc_insn_imm(RELOC_OP_ABS, loc, val, 2, 10,
++					     AARCH64_INSN_IMM_12);
++			break;
++		case R_AARCH64_LDST64_ABS_LO12_NC:
++			overflow_check = false;
++			ovf = corevariant_reloc_insn_imm(RELOC_OP_ABS, loc, val, 3, 9,
++					     AARCH64_INSN_IMM_12);
++			break;
++		case R_AARCH64_LDST128_ABS_LO12_NC:
++			overflow_check = false;
++			ovf = corevariant_reloc_insn_imm(RELOC_OP_ABS, loc, val, 4, 8,
++					     AARCH64_INSN_IMM_12);
++			break;
++		case R_AARCH64_TSTBR14:
++			ovf = corevariant_reloc_insn_imm(RELOC_OP_PREL, loc, val, 2, 14,
++					     AARCH64_INSN_IMM_14);
++			break;
++		case R_AARCH64_CONDBR19:
++			ovf = corevariant_reloc_insn_imm(RELOC_OP_PREL, loc, val, 2, 19,
++					     AARCH64_INSN_IMM_19);
++			break;
++		case R_AARCH64_JUMP26:
++		case R_AARCH64_CALL26:
++			ovf = corevariant_reloc_insn_imm(RELOC_OP_PREL, loc, val, 2, 26,
++					     AARCH64_INSN_IMM_26);
++
++			if (IS_ENABLED(CONFIG_ARM64_MODULE_PLTS) &&
++			    ovf == -ERANGE) {
++				val = corevariant_emit_plt_entry(cv, sechdrs, loc, &rel[i], sym);
++				if (!val)
++					return -ENOEXEC;
++				ovf = corevariant_reloc_insn_imm(RELOC_OP_PREL, loc, val, 2,
++						     26, AARCH64_INSN_IMM_26);
++			}
++			break;
++
++		default:
++			pr_err("module %s: unsupported RELA relocation: %llu\n",
++			       mod->name, ELF64_R_TYPE(rel[i].r_info));
++			return -ENOEXEC;
++		}
++
++		if (overflow_check && ovf == -ERANGE)
++			goto overflow;
++
++	}
++
++	return 0;
++
++overflow:
++	pr_err("module %s: overflow in relocation type %d val %Lx\n", mod->name,
++	       (int)ELF64_R_TYPE(rel[i].r_info), val);
++	return -ENOEXEC;
++}
++
++/* only apply relocations about function call to corevariant in trampoline */
++int apply_relocate_trampoline(Elf_Shdr *sechdrs, const char *strtab,
++			      Elf_Sym *symtab, unsigned int relsec,
++			      struct corevariant *cv, const char *secstrings)
++{
++	unsigned int i;
++	int ovf;
++	Elf64_Sym *sym;
++	void *loc;
++	u64 val;
++	Elf64_Rela *rel = (void *)sechdrs[relsec].sh_addr;
++	struct module *mod = cv->mod;
++	unsigned int sym_type;
++	const char *symname = NULL;
++
++	for (i = 0; i < sechdrs[relsec].sh_size / sizeof(*rel); i++) {
++		/* loc corresponds to P in the AArch64 ELF document. */
++		loc = (void *)sechdrs[sechdrs[relsec].sh_info].sh_addr
++			+ rel[i].r_offset;
++
++		/* sym is the ELF symbol we're referring to. */
++		sym = symtab + ELF64_R_SYM(rel[i].r_info);
++
++		/* val corresponds to (S + A) in the AArch64 ELF document. */
++		val = sym->st_value + rel[i].r_addend;
++
++		sym_type = ELF64_R_TYPE(rel[i].r_info);
++		symname = sym->st_name + strtab;
++
++		switch (sym_type) {
++		/* Null relocations. */
++		case R_ARM_NONE:
++		case R_AARCH64_NONE:
++		/* Relocation not required in here */
++		case R_AARCH64_ADR_PREL_PG_HI21:
++		case R_AARCH64_ADD_ABS_LO12_NC:
++			ovf = 0;
++			break;
++		/* Call functions */
++		case R_AARCH64_JUMP26:
++		case R_AARCH64_CALL26:
++			if (sym_type != STT_FUNC && sym_type != STT_SECTION &&
++			    !is_corevariant_symbol(sym, sechdrs, secstrings,
++						   strtab)) {
++				ovf = 0;
++				break;
++			}
++			/* No need to emit PLT because functions in corevariant
++			 *  should be in 128MB module space.
++			 */
++			ovf = corevariant_reloc_insn_imm(RELOC_OP_PREL, loc, val, 2, 26,
++					     AARCH64_INSN_IMM_26);
++			break;
++		default:
++			/* check again? */
++			pr_err("module %s (trampoline): unexpected RELA relocation: %llu\n",
++			       mod->name, sym_type);
++			return -ENOEXEC;
++		}
++
++		if (ovf == -ERANGE)
++			goto overflow;
++
++	}
++	return 0;
++
++overflow:
++	pr_err("module %s (trampoline): overflow in relocation type %d val %Lx\n",
++	       mod->name, (int)ELF64_R_TYPE(rel[i].r_info), val);
++	return -ERANGE;
++}
++
++static Elf_Shdr *find_section(struct corevariant *cv, const char *secstrings,
++			      const char *name)
++{
++	int i;
++	Elf_Shdr *shdr = cv->cv_sechdr;
++
++	for (i = 1; i < cv->cv_sechdr_len; i++) {
++		Elf_Shdr *sec = &shdr[i];
++
++		if (strcmp(name, secstrings + sec->sh_name) == 0)
++			return sec;
++	}
++
++	return NULL;
++}
++
++#define ALT_ORIG_PTR(a) offset_to_ptr(&(a)->orig_offset)
++#define ALT_REPL_PTR(a) offset_to_ptr(&(a)->alt_offset)
++
++static inline void ptr_to_offset(s32 *ptr, unsigned long ptr_value)
++{
++	s64 newptr = ptr_value - (unsigned long)ptr;
++
++	(*ptr) = newptr;
++	WARN_ON(newptr < S32_MIN || newptr > S32_MAX);
++}
++
++static inline void _alt_instr_swap(struct alt_instr *alt_a,
++				   struct alt_instr *alt_b)
++{
++	long delta = (unsigned long)alt_a - (unsigned long)alt_b;
++
++	swap(*alt_a, *alt_b);
++	alt_a->orig_offset -= delta;
++	alt_a->alt_offset -= delta;
++	alt_b->orig_offset += delta;
++	alt_b->alt_offset += delta;
++}
++
++#ifdef CONFIG_DEBUG_COREVARIANT_ALTSWAP
++static inline void alt_instr_swap(struct alt_instr *alt_a,
++				  struct alt_instr *alt_b)
++{
++	const void *tmp_orig_a = ALT_ORIG_PTR(alt_a);
++	const void *tmp_orig_b = ALT_ORIG_PTR(alt_b);
++	const void *tmp_repl_a = ALT_REPL_PTR(alt_a);
++	const void *tmp_repl_b = ALT_REPL_PTR(alt_b);
++
++	_alt_instr_swap(alt_a, alt_b);
++
++	WARN(ALT_ORIG_PTR(alt_a) != tmp_orig_b,
++	     "%s corruption. ALT_ORIG_PTR(a) should be %px after swap, "
++	     "but was %px. (a=%px, b=%px)",
++	     __func__,
++	     tmp_orig_b, ALT_ORIG_PTR(alt_a), alt_a, alt_b);
++	WARN(ALT_ORIG_PTR(alt_b) != tmp_orig_a,
++	     "%s corruption. ALT_ORIG_PTR(b) should be %px after swap, "
++	     " but was %px. (a=%px, b=%px)",
++	     tmp_orig_a, ALT_ORIG_PTR(alt_b), alt_a, alt_b);
++	WARN(ALT_REPL_PTR(alt_a) != tmp_repl_b,
++	     "alt_instr_swap corruption. ALT_REPL_PTR(a) should be %px after swap, "
++	     "but was %px. (a=%px, b=%px)",
++	     tmp_repl_b, ALT_REPL_PTR(alt_a), alt_a, alt_b);
++	WARN(ALT_REPL_PTR(alt_b) != tmp_repl_a,
++	     "alt_instr_swap corruption. ALT_REPL_PTR(b) should be %px after swap, "
++	     "but was %px. (a=%px, b=%px)",
++	     tmp_repl_a, ALT_REPL_PTR(alt_b), alt_a, alt_b);
++}
++#else
++#define alt_instr_swap(a, b) _alt_instr_swap(a, b)
++#endif
++
++/* find .altinstructions section, filter out of corevariant range. */
++int corevariant_postrelocation(struct corevariant *cv, const char *secstrings,
++			       const Elf_Shdr *shdr)
++{
++	Elf_Shdr *altsec;
++	struct alt_instr *alt;
++	int i;
++	int j;
++
++	altsec = find_section(cv, secstrings, ".altinstructions");
++	if (!altsec) {
++		pr_debug("corevariant: .altinstructions not found, skip postrelocation.\n");
++		return 0;
++	}
++
++	alt = (struct alt_instr *)altsec->sh_addr;
++	i = 0;
++	j = altsec->sh_size / sizeof(struct alt_instr) - 1;
++	while (i <= j) {
++		const void *orig_i = ALT_ORIG_PTR(&alt[i]);
++		const void *orig_j = ALT_ORIG_PTR(&alt[j]);
++
++		if (within_corevariant((unsigned long)orig_i, cv))
++			i++;
++		else if (within_corevariant((unsigned long)orig_j, cv))
++			alt_instr_swap(&alt[i], &alt[j]);
++		else
++			j--;
++	}
++	altsec->sh_size = i * sizeof(struct alt_instr);
++
++	/* apply alternatives as module do. */
++	apply_alternatives_module((void *)altsec->sh_addr, altsec->sh_size);
++	return 0;
++}
+diff --git a/arch/arm64/kernel/module-internal.h b/arch/arm64/kernel/module-internal.h
+new file mode 100644
+index 000000000000..b677c51b10eb
+--- /dev/null
++++ b/arch/arm64/kernel/module-internal.h
+@@ -0,0 +1,32 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++#ifndef _MODULE_INTERNAL_H
++#define _MODULE_INTERNAL_H
++#include <linux/types.h>
++#include <asm/insn.h>
++
++#ifdef CONFIG_ARM64_MODULE_COREVARIANT_RELOCATE
++enum aarch64_reloc_op {
++	RELOC_OP_NONE,
++	RELOC_OP_ABS,
++	RELOC_OP_PREL,
++	RELOC_OP_PAGE,
++};
++
++enum aarch64_insn_movw_imm_type {
++	AARCH64_INSN_IMM_MOVNZ,
++	AARCH64_INSN_IMM_MOVKZ,
++};
++
++extern int corevariant_reloc_data(enum aarch64_reloc_op op, void *place,
++				  u64 val, int len);
++
++extern int corevariant_reloc_insn_movw(enum aarch64_reloc_op op, __le32 *place,
++					u64 val, int lsb,
++					enum aarch64_insn_movw_imm_type imm_type);
++
++extern int corevariant_reloc_insn_imm(enum aarch64_reloc_op op, __le32 *place,
++				      u64 val, int lsb, int len,
++				      enum aarch64_insn_imm_type imm_type);
++
++#endif
++#endif /* _MODULE_INTERNAL_H */
+diff --git a/arch/arm64/kernel/module.c b/arch/arm64/kernel/module.c
+index acd557c83b6f..3377ae040f42 100644
+--- a/arch/arm64/kernel/module.c
++++ b/arch/arm64/kernel/module.c
+@@ -19,6 +19,9 @@
+ #include <asm/alternative.h>
+ #include <asm/insn.h>
+ #include <asm/sections.h>
++#ifdef CONFIG_ARM64_MODULE_COREVARIANT_RELOCATE
++#include "module-internal.h"
++#endif
+ 
+ void *module_alloc(unsigned long size)
+ {
+@@ -63,12 +66,15 @@ void *module_alloc(unsigned long size)
+ 	return p;
+ }
+ 
++/* defined in ./module-internal.h, makes rebase easy */
++#ifndef CONFIG_ARM64_MODULE_COREVARIANT_RELOCATE
+ enum aarch64_reloc_op {
+ 	RELOC_OP_NONE,
+ 	RELOC_OP_ABS,
+ 	RELOC_OP_PREL,
+ 	RELOC_OP_PAGE,
+ };
++#endif
+ 
+ static u64 do_reloc(enum aarch64_reloc_op reloc_op, __le32 *place, u64 val)
+ {
+@@ -146,10 +152,12 @@ static int reloc_data(enum aarch64_reloc_op op, void *place, u64 val, int len)
+ 	return 0;
+ }
+ 
++#ifndef CONFIG_ARM64_MODULE_COREVARIANT_RELOCATE
+ enum aarch64_insn_movw_imm_type {
+ 	AARCH64_INSN_IMM_MOVNZ,
+ 	AARCH64_INSN_IMM_MOVKZ,
+ };
++#endif
+ 
+ static int reloc_insn_movw(enum aarch64_reloc_op op, __le32 *place, u64 val,
+ 			   int lsb, enum aarch64_insn_movw_imm_type imm_type)
+@@ -254,6 +262,25 @@ static int reloc_insn_adrp(struct module *mod, Elf64_Shdr *sechdrs,
+ 	return 0;
+ }
+ 
++#ifdef CONFIG_ARM64_MODULE_COREVARIANT_RELOCATE
++int corevariant_reloc_data(enum aarch64_reloc_op op, void *place, u64 val, int len)
++{
++	return reloc_data(op, place, val, len);
++}
++
++int corevariant_reloc_insn_movw(enum aarch64_reloc_op op, __le32 *place, u64 val,
++				int lsb, enum aarch64_insn_movw_imm_type imm_type)
++{
++	return reloc_insn_movw(op, place, val, lsb, imm_type);
++}
++
++int corevariant_reloc_insn_imm(enum aarch64_reloc_op op, __le32 *place, u64 val,
++			       int lsb, int len, enum aarch64_insn_imm_type imm_type)
++{
++	return reloc_insn_imm(op, place, val, lsb, len, imm_type);
++}
++#endif
++
+ int apply_relocate_add(Elf64_Shdr *sechdrs,
+ 		       const char *strtab,
+ 		       unsigned int symindex,
+diff --git a/block/Makefile b/block/Makefile
+index 8d841f5f986f..b2cb67e99fdd 100644
+--- a/block/Makefile
++++ b/block/Makefile
+@@ -23,6 +23,9 @@ obj-$(CONFIG_MQ_IOSCHED_DEADLINE)	+= mq-deadline.o
+ obj-$(CONFIG_MQ_IOSCHED_KYBER)	+= kyber-iosched.o
+ bfq-y				:= bfq-iosched.o bfq-wf2q.o bfq-cgroup.o
+ obj-$(CONFIG_IOSCHED_BFQ)	+= bfq.o
++ifeq ($(findstring $(bfq.ko),$(MODULE_FG_KASLR_ENABLE)),$(bfq.ko))
++$(foreach o, $(bfq-y), $(eval CFLAGS_$(o) += $(ENABLE_TRAMPOLINE_PLUGIN)))
++endif
+ 
+ obj-$(CONFIG_BLK_CMDLINE_PARSER)	+= cmdline-parser.o
+ obj-$(CONFIG_BLK_DEV_INTEGRITY) += bio-integrity.o blk-integrity.o
+diff --git a/include/linux/compiler-gcc.h b/include/linux/compiler-gcc.h
+index ae2de4e1cd6f..235710d2f78e 100644
+--- a/include/linux/compiler-gcc.h
++++ b/include/linux/compiler-gcc.h
+@@ -116,6 +116,10 @@
+ #define KASAN_ABI_VERSION 3
+ #endif
+ 
++#ifdef CONFIG_SHADOW_CALL_STACK
++#define __noscs __attribute__((__no_sanitize__("shadow-call-stack")))
++#endif
++
+ #if __has_attribute(__no_sanitize_address__)
+ #define __no_sanitize_address __attribute__((no_sanitize_address))
+ #else
+diff --git a/include/linux/module.h b/include/linux/module.h
+index b2b2c742a397..71972a608efc 100644
+--- a/include/linux/module.h
++++ b/include/linux/module.h
+@@ -9,6 +9,7 @@
+ #ifndef _LINUX_MODULE_H
+ #define _LINUX_MODULE_H
+ 
++#include "linux/kabi.h"
+ #include <linux/list.h>
+ #include <linux/stat.h>
+ #include <linux/compiler.h>
+@@ -565,7 +566,11 @@ struct module {
+ 	KABI_RESERVE(1)
+ #endif
+ 
++#ifdef CONFIG_ARM64_MODULE_COREVARIANT
++	KABI_USE(2, struct modulevariants *cv);
++#else
+ 	KABI_RESERVE(2)
++#endif
+ 	KABI_RESERVE(3)
+ 	KABI_RESERVE(4)
+ } ____cacheline_aligned __randomize_layout;
+diff --git a/include/linux/module_corevariant.h b/include/linux/module_corevariant.h
+new file mode 100644
+index 000000000000..ef6f5bfa6630
+--- /dev/null
++++ b/include/linux/module_corevariant.h
+@@ -0,0 +1,111 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++#ifndef _LINUX_MODULE_COREVARIANT_H
++#define _LINUX_MODULE_COREVARIANT_H
++
++#include <linux/module.h>
++#include <linux/elf.h>
++
++struct corevariant {
++	long status;
++
++	/* required for relocate trampoline in core_layout */
++	Elf_Sym *cv_symtab;
++	unsigned long cv_symtab_len;
++	/* don't copy rela sections. It's huge and we can modify the process of relocation. */
++
++	/* always keep for modify scs and registers.  */
++	Elf_Shdr *cv_sechdr;
++	unsigned long cv_sechdr_len;
++
++	struct mod_plt_sec pltsec;
++
++	/* layout of this corevariant. */
++	struct module_layout layout __module_layout_align;
++
++	/* related module. */
++	struct module *mod;
++};
++
++#define CV_UNSET 0
++#define CV_INITING 1
++#define CV_READY 2
++#define CV_RUNNING 3
++#define CV_STOPPED 4
++#define CV_DEACTIVATED 5
++
++#define CV_REFORMING 7
++#define CV_ALLOW_EXIT 8
++#define CV_FLUSH_REQUIRED 9
++
++struct modulevariants {
++	// TODO: can we use higher part of `status` to mark which CV
++	//   has been allocated and which one is currently running?
++	u32 status;
++
++	struct corevariant vars[2];
++
++	/* data need by corevariant generation, free at unload */
++	struct cv_setup_info *setup_info;
++
++	/* data required when apply corevariant */
++	struct {
++		/* shdr[idx].sh_addr should be the address of sections in core_layout. */
++		Elf_Shdr *shdr;
++		unsigned int len_shdr;
++	} core_info;
++};
++
++static inline bool within_corevariant(unsigned long addr,
++				      const struct corevariant *cv)
++{
++	return (unsigned long)cv->layout.base <= addr &&
++	       addr < (unsigned long)cv->layout.base + cv->layout.size;
++}
++
++/*
++ * Apply the given add relocation to the (simplified) ELF.  Return
++ * -error or 0
++ */
++#ifdef CONFIG_MODULES_USE_ELF_RELA
++int apply_relocate_corevariant(Elf_Shdr *sechdrs, const char *strtab,
++			       Elf_Sym *symtab, unsigned int relsec,
++			       struct corevariant *cv);
++
++int apply_relocate_trampoline(Elf_Shdr *sechdrs, const char *strtab,
++			      Elf_Sym *symtab, unsigned int relsec,
++			      struct corevariant *cv, const char *secstrings);
++#endif
++
++bool is_corevariant_symbol(const Elf_Sym *src, const Elf_Shdr *sechdrs,
++			   const char *secstrings, const char *strtab);
++
++u64 corevariant_emit_veneer_for_adrp(struct corevariant *cv,
++				     Elf64_Shdr *sechdrs, void *loc, u64 val);
++
++u64 corevariant_emit_plt_entry(struct corevariant *cv, Elf64_Shdr *sechdrs,
++			       void *loc, const Elf64_Rela *rela,
++			       Elf64_Sym *sym);
++
++int corevariant_postrelocation(struct corevariant *cv, const char *secstrings,
++			       const Elf_Shdr *shdr);
++
++extern int generate_corevariant(struct corevariant *cv, struct cv_setup_info *info);
++
++extern int apply_corevariant(struct corevariant *cv, const struct module *mod);
++
++extern void free_corevariant(struct corevariant *cv);
++
++extern void deactivate_corevariant(struct corevariant *cv);
++
++#ifdef CONFIG_DEBUG_COREVARIANT
++extern bool __symbol_type_valid(const Elf_Sym *target, const Elf_Sym *source,
++				const char *strtab);
++#else
++static inline bool __symbol_type_valid(const Elf_Sym *target,
++				       const Elf_Sym *source,
++				       const char *strtab)
++{
++	return true;
++};
++#endif
++#endif /* _LINUX_MODULE_COREVARIANT_H */
+diff --git a/include/linux/sched.h b/include/linux/sched.h
+index 3aae225f98a7..d75c424460a1 100644
+--- a/include/linux/sched.h
++++ b/include/linux/sched.h
+@@ -516,9 +516,14 @@ struct sched_entity {
+ 	struct sched_avg		avg;
+ #endif
+ 
++#ifdef CONFIG_ARM64_RERANDOM_SUPPORT
++	struct list_head randmod_node;
++	KABI_USE(3, int randmod_refcnt);
++#else
+ 	KABI_RESERVE(1)
+ 	KABI_RESERVE(2)
+ 	KABI_RESERVE(3)
++#endif
+ 	KABI_RESERVE(4)
+ };
+ 
+@@ -1442,7 +1447,12 @@ struct task_struct {
+ 	KABI_RESERVE(10)
+ 	KABI_RESERVE(11)
+ #endif
++#ifdef CONFIG_ARM64_RERANDOM_SUPPORT
++	/* true skip, false run */
++	KABI_EXTEND_WITH_SIZE(volatile bool randmod_skip_flag, 2)
++#else
+ 	KABI_RESERVE(12)
++#endif
+ 	KABI_RESERVE(13)
+ 	KABI_RESERVE(14)
+ 	KABI_RESERVE(15)
+diff --git a/init/Kconfig b/init/Kconfig
+index 103933296b50..23d9bfad1734 100644
+--- a/init/Kconfig
++++ b/init/Kconfig
+@@ -2248,6 +2248,10 @@ config MODULE_FORCE_UNLOAD
+ 	  rmmod).  This is mainly for kernel developers and desperate users.
+ 	  If unsure, say N.
+ 
++config MODULE_SETUP_CVINFO
++	def_bool n
++	depends on MODULE_FG_KASLR
++
+ config MODVERSIONS
+ 	bool "Module versioning support"
+ 	help
+@@ -2496,6 +2500,15 @@ config MODULE_FG_KASLR_ENABLE
+ 	  This sets a whitespace-separated list that specify which kernel 
+ 	  modules should enable FG-KASLR.
+ 
++config MODULE_FG_KASLR_GDB_TEXT
++	bool "Keep .text to FG-KASLR enabled kernel module"
++	default y
++	depends on MODULE_FG_KASLR
++	help
++	  This option keeps .text section in FG-KASLR enabled kernel module,
++	  prevents GDB from crashing when loading symbols from FG-KASLR enabled
++	  kernel modules.
++
+ endif # MODULES
+ 
+ config MODULES_TREE_LOOKUP
+diff --git a/kernel/Makefile b/kernel/Makefile
+index 3ae3b70c46e8..27dc2b12f126 100644
+--- a/kernel/Makefile
++++ b/kernel/Makefile
+@@ -132,6 +132,11 @@ KCOV_INSTRUMENT_stackleak.o := n
+ 
+ obj-$(CONFIG_SCF_TORTURE_TEST) += scftorture.o
+ 
++obj-$(CONFIG_ARM64_RERANDOM_SUPPORT) += randmod_utils.o
++obj-$(CONFIG_ARM64_RANDOM_MODULE) += randmod.o
++obj-$(CONFIG_ARM64_RERANDOM_SUPPORT) += corevariant.o
++obj-$(CONFIG_ARM64_RERANDOM_SUPPORT) += corevariant-init.o
++
+ $(obj)/configs.o: $(obj)/config_data.gz
+ 
+ targets += config_data config_data.gz
+diff --git a/kernel/corevariant-init.c b/kernel/corevariant-init.c
+new file mode 100644
+index 000000000000..090ceddab511
+--- /dev/null
++++ b/kernel/corevariant-init.c
+@@ -0,0 +1,83 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++#include <linux/module.h>
++#include <linux/slab.h>
++#include "module-internal.h"
++#include "corevariant-internal.h"
++#include <linux/module_corevariant.h>
++
++int init_corevariant_setup(struct module *mod, const struct load_info *info)
++{
++	int i;
++	struct modulevariants *mod_cv;
++
++	mod_cv = kzalloc(sizeof(*mod_cv), GFP_KERNEL);
++	if (!mod_cv)
++		return -ENOMEM;
++	mod->cv = mod_cv;
++
++	mod_cv->status = CV_INITING;
++	mod_cv->setup_info = info->cvinfo;
++
++	/* used when apply corevariant into core_layout.*/
++	mod_cv->core_info.shdr = info->cvinfo->roabs_sechdrs;
++	mod_cv->core_info.len_shdr = info->cvinfo->len_ro_sechdrs;
++
++	for (i = 0; i < 2; i++)
++		mod_cv->vars[i].mod = mod;
++
++	/* Ready to setup Corevaraint. */
++	mod_cv->status = CV_READY;
++	return 0;
++}
++
++void unload_corevariant_setup(struct module *mod)
++{
++	struct modulevariants *mod_cv = mod->cv;
++	int i;
++
++	if (!mod_cv)
++		return;
++
++	for (i = 0; i < 2; i++) {
++		struct corevariant *cv = &mod_cv->vars[i];
++
++		if (cv->status != CV_UNSET)
++			free_corevariant(cv);
++	}
++
++	free_cv_setup_info(mod_cv->setup_info);
++
++	kfree(mod_cv);
++};
++
++int register_corevariant(struct module *mod, struct load_info *info)
++{
++	int err;
++	struct modulevariants *mod_cv;
++	struct corevariant *cv;
++
++	err = init_corevariant_setup(mod, info);
++	if (err)
++		goto failed;
++
++	/* try to generate first corevariants and apply */
++	mod_cv = mod->cv;
++	cv = &mod_cv->vars[0];
++
++	err = generate_corevariant(cv, info->cvinfo);
++	if (err)
++		goto unregister_variant;
++
++	err = apply_corevariant(cv, mod);
++	if (err)
++		goto unregister_variant;
++
++	return 0;
++unregister_variant:
++	pr_warn("initial corevariant failed for %s, disable rerandomize support.\n",
++		mod->name);
++	kfree(mod_cv);
++	mod->cv = NULL;
++failed:
++	return err;
++}
+diff --git a/kernel/corevariant-internal.h b/kernel/corevariant-internal.h
+new file mode 100644
+index 000000000000..92459e7f542b
+--- /dev/null
++++ b/kernel/corevariant-internal.h
+@@ -0,0 +1,32 @@
++/* SPDX-License-Identifier: GPL-2.0-or-later */
++#ifndef __KERNEL__COREVARIANT_INTERNAL_H
++#define __KERNEL__COREVARIANT_INTERNAL_H
++#include <linux/elf.h>
++#include <linux/module.h>
++
++struct cv_setup_info {
++	/* pointer to ELF, freed with vfree() */
++	Elf_Ehdr *orig_hdr;
++
++	/* pointers to contents in orig_hdr */
++	const char *secstrings;
++	const char *strtab;
++	/* section headers with sh_addr set to real address of sections */
++	Elf_Shdr *roabs_sechdrs;
++
++	/* length of specified array. */
++	unsigned int len_ro_sechdrs;
++	unsigned int len_ro_symtab;
++
++	/* pointers to memory allocated by vmalloc, required free at unload module. */
++	struct {
++		Elf_Shdr *ro_sechdrs;
++		Elf_Sym *ro_symtab;
++	};
++};
++
++#ifdef CONFIG_MODULE_SETUP_CVINFO
++extern void free_cv_setup_info(struct cv_setup_info *info);
++#endif
++
++#endif /* __KERNEL__COREVARIANT_INTERNAL_H */
+diff --git a/kernel/corevariant.c b/kernel/corevariant.c
+new file mode 100644
+index 000000000000..d92772b1c42d
+--- /dev/null
++++ b/kernel/corevariant.c
+@@ -0,0 +1,622 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++
++/* corevariant.c: tools to generate core variant code.*/
++/* layout_symtab reserves space for symbols in kallsyms, but we need full symbols.*/
++
++#include <linux/kernel.h>
++#include <linux/elf.h>
++#include <linux/module.h>
++#include <linux/mm.h>
++#include <linux/moduleloader.h>
++#include <linux/set_memory.h>
++#include <asm/cacheflush.h>
++#include <linux/vmalloc.h>
++#include <linux/module_corevariant.h>
++#include "module-internal.h"
++#include "corevariant-internal.h"
++
++#ifdef CONFIG_ARCH_HAS_STRICT_MODULE_RWX
++# define debug_align(X) ALIGN(X, PAGE_SIZE)
++#else
++# define debug_align(X) (X)
++#endif
++
++static bool is_corevariant_section(const Elf_Shdr *sec, const char *secstrings)
++{
++	/* We need PLT for jump to symbols of kernel or other modules. */
++	static const char *ro_text_section_prefix[] = { ".trampoline", ".exit",
++							".init" };
++	const unsigned long exec_mask = SHF_EXECINSTR | SHF_ALLOC;
++	int _i;
++	const char *secname = sec->sh_name + secstrings;
++
++	if ((sec->sh_flags & exec_mask) == exec_mask) {
++		for (_i = 0; _i < ARRAY_SIZE(ro_text_section_prefix); _i++)
++			if (strstarts(secname, ro_text_section_prefix[_i]))
++				goto rotext_section;
++		goto corevariant_section;
++	}
++
++rotext_section:
++	return false;
++corevariant_section:
++	return true;
++}
++
++bool is_corevariant_symbol(const Elf_Sym *src, const Elf_Shdr *sechdrs,
++			   const char *secstrings, const char *strtab)
++{
++	const Elf_Shdr *sec;
++	const char *secname;
++	const char *symname;
++
++	symname = strtab + src->st_name;
++	if (src->st_shndx >= SHN_LORESERVE) {
++		sec = NULL;
++		secname = NULL;
++	} else {
++		sec = sechdrs + src->st_shndx;
++		secname = secstrings + sec->sh_name;
++	}
++
++	/* don't care about kernel symbol or absolute symbol. */
++	if (src->st_shndx == SHN_UNDEF || src->st_shndx == SHN_ABS)
++		goto symbol_rocore;
++
++	switch (ELF_ST_TYPE(src->st_info)) {
++	case STT_NOTYPE:
++		/*
++		 * STT_NOTYPE && STB_LOCAL w/o SHN_UNDEF or SHN_ABS:
++		 *   ARM mapping symbols, ELF local symbols or __ksymtab/__kstrtab
++		 *
++		 * RELA entries should not reference any type of ARM mapping symbols.
++		 *
++		 * __bug_table generates a lot of ELF local symbols, do relocation as
++		 * function sections does.
++		 *
++		 * __ksymtab/__kstrtab contains explicit exported symbols, and it
++		 * should be in original core_layout.
++		 * __kcrctab st_shndx is SHN_ABS, nothing need to do here.
++		 */
++		if (ELF_ST_BIND(src->st_info) == STB_LOCAL) {
++			if (is_corevariant_section(sec, secstrings))
++				goto symbol_corevariant;
++			else
++				goto symbol_rocore;
++		}
++		break;
++	// TODO: special case: target symbol in .text section?
++	case STT_OBJECT:
++		goto symbol_rocore;
++		break;
++	/* require check related section attribute. */
++	case STT_FUNC:
++	case STT_SECTION:
++		if (is_corevariant_section(sec, secstrings))
++			goto symbol_corevariant;
++		else
++			goto symbol_rocore;
++		break;
++	default:
++		goto symbol_fallback;
++		break;
++	}
++
++symbol_fallback:
++	pr_debug("symtab %px %s : section %s, info %x return as fallback\n",
++		 src, symname, secname, src->st_info);
++	return false;
++
++symbol_corevariant:
++	pr_debug(
++		"symtab %px %s : section %s, info %x as explicit corevariant\n",
++		src, symname, secname, src->st_info);
++	return true;
++symbol_rocore:
++	pr_debug("symtab %px %s : section %s, info %x as rocore.\n", src,
++		 symname, (sec == NULL ? "(NONE)" : secname), src->st_info);
++	return false;
++}
++
++/* copy_reloc_info(): allocate and copy sechdr and symtab. */
++static int copy_reloc_info(const struct cv_setup_info *src,
++			   struct corevariant *cv)
++{
++	const Elf_Shdr *src_shdr = src->ro_sechdrs;
++	/* we need copy unmodified symtab. */
++	const Elf_Sym *src_sym = NULL;
++	unsigned long len_shdr = src->len_ro_sechdrs;
++	unsigned long len_sym = src->len_ro_symtab;
++	unsigned int i;
++	Elf_Shdr *dst_shdr;
++	Elf_Sym *dst_sym;
++
++	/* parse symtab section */
++	for (i = 1; i < len_shdr; i++) {
++		if (src_shdr[i].sh_type == SHT_SYMTAB) {
++			src_sym = (void *)src_shdr[i].sh_addr;
++			break;
++		}
++	}
++
++	dst_shdr = kvmalloc_array(len_shdr, sizeof(Elf_Shdr), GFP_KERNEL);
++	if (!dst_shdr)
++		goto fail;
++	dst_sym = kvmalloc_array(len_sym, sizeof(Elf_Sym), GFP_KERNEL);
++	if (!dst_sym)
++		goto free_shdr;
++
++	memcpy(dst_shdr, src_shdr, sizeof(*dst_shdr) * len_shdr);
++	memcpy(dst_sym, src_sym, sizeof(*src_sym) * len_sym);
++
++	cv->cv_sechdr = dst_shdr;
++	cv->cv_sechdr_len = len_shdr;
++	cv->cv_symtab = dst_sym;
++	cv->cv_symtab_len = len_sym;
++	return 0;
++
++free_shdr:
++	kvfree(dst_shdr);
++fail:
++	return -ENOMEM;
++}
++
++static void free_reloc_info(struct corevariant *cv)
++{
++	kvfree(cv->cv_sechdr);
++	kvfree(cv->cv_symtab);
++}
++
++/* Update size with this section: return offset. */
++static long get_offset(unsigned int *size, Elf_Shdr *sechdr)
++{
++	long ret;
++
++	ret = ALIGN(*size, sechdr->sh_addralign ?: 1);
++	*size = ret + sechdr->sh_size;
++	return ret;
++}
++
++/* will not change index of section headers when shuffle sections. */
++static unsigned int find_sec(const struct cv_setup_info *info, const char *name)
++{
++	unsigned int i;
++
++	for (i = 1; i < info->orig_hdr->e_shnum; i++) {
++		Elf_Shdr *shdr = &info->ro_sechdrs[i];
++
++		if ((shdr->sh_flags & SHF_ALLOC)
++		    && strcmp(info->secstrings + shdr->sh_name, name) == 0)
++			return i;
++	}
++	return 0;
++}
++
++/*
++ * layout_text_corevariant(): layout text sections in corevaraints.
++ * this function also sets text_size and size in layout.
++ */
++static int layout_text_corevariant(struct corevariant *cv,
++				   const struct cv_setup_info *setup_info)
++{
++	int i;
++	const char *secstring = setup_info->secstrings;
++	static unsigned long const text_mask = SHF_EXECINSTR | SHF_ALLOC;
++
++	const int max_sections = cv->cv_sechdr_len;
++	int shuffle_text_size = 0;
++	int num_text_sections = 0;
++	Elf_Shdr *pltsec = NULL;
++	Elf_Shdr **text_list;
++
++	text_list =
++		kvmalloc_array(max_sections, sizeof(*text_list), GFP_KERNEL);
++	if (!text_list)
++		return -ENOMEM;
++
++	/* find section should belongs to corevariant, and allocate it. */
++	for (i = 0; i < max_sections; i++) {
++		Elf_Shdr *shdr = &cv->cv_sechdr[i];
++		const char *sname = shdr->sh_name + secstring;
++
++		shdr->sh_entsize = ~0UL;
++		if ((shdr->sh_flags & text_mask) != text_mask ||
++		    !is_corevariant_section(shdr, secstring))
++			continue;
++
++		/* we want to place an empty .plt section in the end of text sections */
++		if (strcmp(".plt", sname) == 0) {
++			pltsec = shdr;
++			cv->pltsec.plt_shndx = i;
++			continue;
++		}
++
++		/* We don't need to allocate offsets here. We allocate offsets after shuffle_array. */
++		text_list[num_text_sections] = shdr;
++		num_text_sections++;
++	}
++
++	/* It's weired that we don't have any vaild text sections in corevaraints */
++	if (!num_text_sections)
++		goto exit;
++
++	shuffle_array(text_list, num_text_sections);
++
++	pr_debug("Corevariant text section allocation order:\n");
++	for (i = 0; i < num_text_sections; i++) {
++		Elf_Shdr *shdr = text_list[i];
++
++		shdr->sh_entsize = get_offset(&shuffle_text_size, shdr);
++		pr_debug("\t%d %s\n", i, setup_info->secstrings + shdr->sh_name);
++	}
++
++	if (likely(pltsec)) {
++		pltsec->sh_entsize = get_offset(&shuffle_text_size, pltsec);
++		cv->pltsec.plt_num_entries = 0;
++		cv->pltsec.plt_max_entries = cv->mod->arch.core.plt_max_entries;
++		pr_debug("Corevariant found PLT(%d) MAX %d\n", cv->pltsec.plt_shndx, cv->pltsec.plt_max_entries);
++	}
++	cv->layout.size = debug_align(shuffle_text_size);
++	cv->layout.text_size = cv->layout.size;
++
++exit:
++	kvfree(text_list);
++	return 0;
++}
++
++/* .altinstructions in AArch64 use PREL32 relocation,
++ * it should be allocated in layout read-only data
++ */
++static int layout_rodata_corevariant(struct corevariant *cv, const struct cv_setup_info *setup_info)
++{
++	static const char *cv_rodata_secname[] = { ".altinstructions" };
++	Elf_Shdr *data_shdr;
++	int i;
++
++	pr_debug("Corevariant rodata section allocation order:\n");
++	for (i = 0; i < ARRAY_SIZE(cv_rodata_secname); i++) {
++		int secindex = find_sec(setup_info, cv_rodata_secname[i]);
++
++		if (secindex == 0)
++			continue;
++		data_shdr = &cv->cv_sechdr[secindex];
++		data_shdr->sh_entsize = get_offset(&cv->layout.size, data_shdr);
++
++		pr_debug("\t%s\n", setup_info->secstrings + data_shdr->sh_name);
++	}
++
++	cv->layout.size = debug_align(cv->layout.size);
++	cv->layout.ro_size = cv->layout.size;
++
++	return 0;
++}
++
++static int layout_corevariant(struct corevariant *cv,
++			      const struct cv_setup_info *setup_info)
++{
++	int err;
++
++	err = layout_text_corevariant(cv, setup_info);
++	if (err)
++		goto exit;
++
++	err = layout_rodata_corevariant(cv, setup_info);
++	if (err)
++		goto exit;
++
++	/* now set ro_after_init as usual. */
++	cv->layout.ro_after_init_size = cv->layout.size;
++	return 0;
++exit:
++	return err;
++}
++
++/* NOTICE: for compatibility, set symtab section address to cv->cv_symtab as needed. */
++static int copy_cvsections(struct corevariant *cv, const Elf_Ehdr *ehdr)
++{
++	int i;
++	const int max_sections = cv->cv_sechdr_len;
++
++	const Elf_Shdr *strhdr = &cv->cv_sechdr[ehdr->e_shstrndx];
++	const char *secstring = (void *)ehdr + strhdr->sh_offset;
++
++	memset(cv->layout.base, 0, cv->layout.size);
++
++	pr_debug("Copied corevariant section addresses:\n");
++	for (i = 0; i < max_sections; i++) {
++		Elf_Shdr *sec = &cv->cv_sechdr[i];
++		void *dest;
++
++		if (!(sec->sh_flags & SHF_ALLOC) || sec->sh_entsize == ~0UL)
++			continue;
++		dest = cv->layout.base + sec->sh_entsize;
++		if (sec->sh_type != SHT_NOBITS)
++			memcpy(dest, (void *)sec->sh_addr, sec->sh_size);
++		sec->sh_addr = (unsigned long)dest;
++		pr_debug("\t0x%lx %s\n", (long)sec->sh_addr,
++			 secstring + sec->sh_name);
++	}
++
++	return 0;
++}
++
++static int allocate_and_copy_cvsections(struct corevariant *cv, const Elf_Ehdr *ehdr)
++{
++	void *ptr;
++
++	ptr = module_alloc(cv->layout.size);
++	if (!ptr)
++		return -ENOMEM;
++
++	/* memory clear should in copy_cvsections() */
++	cv->layout.base = ptr;
++	return copy_cvsections(cv, ehdr);
++}
++
++/* merge_symtab: set symbol's address with core_layout or copied section address */
++static int merge_symtab(struct corevariant *cv, const struct cv_setup_info *setup_info)
++{
++	int i;
++	const unsigned long symtab_len = cv->cv_symtab_len;
++	Elf_Sym *cv_sym = cv->cv_symtab;
++	Elf_Shdr *sechdr = cv->cv_sechdr;
++	const char *secstring = setup_info->secstrings;
++	const char *strtab = setup_info->strtab;
++	const Elf_Sym *ro_symtab = setup_info->ro_symtab;
++
++	/* symtab[0] always means nothing */
++	for (i = 1; i < symtab_len; i++) {
++		Elf_Sym *curr = &cv_sym[i];
++		const Elf_Sym *src = &ro_symtab[i];
++
++		if (!__symbol_type_valid(curr, src, strtab))
++			continue;
++
++		if (curr->st_shndx == SHN_ABS)
++			/* No need to do anything with ABS symbol */
++			continue;
++		if (is_corevariant_symbol(curr, cv->cv_sechdr, secstring,
++					  strtab)) {
++			curr->st_value += sechdr[curr->st_shndx].sh_addr;
++			continue;
++		}
++		/* copy symbol's real address from core.
++		 * Also copy UND address from ro_symtab because
++		 *  st_value of ro_symtab entries should have real address of symbol.
++		 */
++		curr->st_value = src->st_value;
++	}
++	return 0;
++}
++
++/* call it out of user context is strongly discouraged. */
++static int apply_relocations_corevariant(struct corevariant *cv,
++					 struct cv_setup_info *setup_info)
++{
++	unsigned int i;
++	int err = 0;
++	Elf_Shdr *shdr = cv->cv_sechdr;
++	const char *strtab = setup_info->strtab;
++	Elf_Sym *symtab = cv->cv_symtab;
++
++	for (i = 0; i < cv->cv_sechdr_len; i++) {
++		unsigned int infosec = shdr[i].sh_info;
++
++		if (infosec >= cv->cv_sechdr_len)
++			continue;
++		if (!within_corevariant(shdr[infosec].sh_addr, cv))
++			continue;
++		if (shdr[i].sh_type == SHT_RELA)
++			err = apply_relocate_corevariant(shdr, strtab, symtab,
++							 i, cv);
++		if (err < 0)
++			break;
++	}
++	return err;
++}
++
++// TODO: NOTICE: may called when all interrupt disabled in target processor.
++// TODO: enhancement: simplify .trampoline relocation table and relocation process.
++/* Apply relocation for trampoline, use sechdrs of core_layout. */
++static int do_trampoline_relocation(Elf_Shdr *ro_sechdr, struct corevariant *cv,
++				    struct cv_setup_info *setup_info)
++{
++	unsigned int i;
++	int err = 0;
++	Elf_Shdr *shdr = ro_sechdr;
++	const char *strtab = setup_info->strtab;
++	Elf_Sym *symtab = cv->cv_symtab;
++	const char *secstrings = setup_info->secstrings;
++
++	for (i = 1; i < cv->cv_sechdr_len; i++) {
++		unsigned int infosec = shdr[i].sh_info;
++
++		if (infosec >= cv->cv_sechdr_len)
++			continue;
++
++		if (shdr[i].sh_type == SHT_RELA) {
++			const char *sname = secstrings + shdr[infosec].sh_name;
++
++			if (!strstarts(sname, ".trampoline"))
++				continue;
++			/* only apply CALL26/JUMP26 relocation here. */
++			err = apply_relocate_trampoline(shdr, strtab, symtab, i,
++							cv, secstrings);
++		}
++		if (err < 0)
++			break;
++	}
++	return 0;
++}
++
++/*
++ * corevariant layout, all size are always page-aligned as LKM RO/NX protection does.
++ *          [text] [read-only-data]
++ * text_size -----^                ^
++ * ro_size ------------------------|
++ * ro_after_init_size -------------|
++ * size ---------------------------|
++ *
++ * These values are always page-aligned (as is base)
++ */
++
++#ifdef CONFIG_ARCH_HAS_STRICT_MODULE_RWX
++static void frob_corevariant_text(const struct module_layout *layout,
++				  int (*set_memory)(unsigned long start, int num_pages))
++{
++	BUG_ON((unsigned long)layout->base & (PAGE_SIZE - 1));
++	BUG_ON((unsigned long)layout->text_size & (PAGE_SIZE - 1));
++	set_memory((unsigned long)layout->base, layout->text_size >> PAGE_SHIFT);
++}
++#else /* !CONFIG_ARCH_HAS_STRICT_MODULE_RWX */
++static void frob_corevariant_text(const struct module_layout *layout,
++				  int (*set_memory)(unsigned long start, int num_pages))
++{}
++#endif /* CONFIG_ARCH_HAS_STRICT_MODULE_RWX */
++
++#ifdef CONFIG_STRICT_MODULE_RWX
++static void frob_corevariant_rodata(const struct module_layout *layout,
++				    int (*set_memory)(unsigned long start, int num_pages))
++{
++	BUG_ON((unsigned long)layout->base & (PAGE_SIZE - 1));
++	BUG_ON((unsigned long)layout->text_size & (PAGE_SIZE - 1));
++	BUG_ON((unsigned long)layout->ro_size & (PAGE_SIZE - 1));
++	set_memory((unsigned long)layout->base + layout->text_size,
++		   (layout->ro_size - layout->text_size) >> PAGE_SHIFT);
++}
++#else /* !CONFIG_STRICT_MODULE_RWX */
++static void frob_corevariant_rodata(const struct module_layout *layout,
++				    int (*set_memory)(unsigned long start, int num_pages))
++{}
++#endif /* CONFIG_STRICT_MODULE_RWX */
++
++/* generate_corevariant: generate corevariant by using information in info.
++ * caller should parse *info before try to generate new corevariants.
++ */
++int generate_corevariant(struct corevariant *cv, struct cv_setup_info *info)
++{
++	int ret;
++	WARN_ON(cv->status != CV_UNSET);
++
++	cv->status = CV_INITING;
++	ret = copy_reloc_info(info, cv);
++	if (ret)
++		goto err_exit;
++
++	/* now we have information about how to relocate corevariant. */
++	ret = layout_corevariant(cv, info);
++	if (ret)
++		goto free_reloc_info;
++
++	ret = allocate_and_copy_cvsections(cv, info->orig_hdr);
++	if (ret)
++		goto free_reloc_info;
++
++	/* here we have corevariant in memory of module. */
++	ret = merge_symtab(cv, info);
++	if (ret)
++		goto free_cvlayout;
++
++	ret = apply_relocations_corevariant(cv, info);
++	if (ret)
++		goto free_cvlayout;
++	/* then filter and allocate .altinstructions */
++	ret = corevariant_postrelocation(cv, info->secstrings, cv->cv_sechdr);
++	if (ret)
++		goto free_cvlayout;
++
++	/* flush the instruction cache, see comment in kernel/module.c:flush_module_icache() */
++	flush_icache_range((unsigned long)cv->layout.base,
++			   (unsigned long)cv->layout.base + cv->layout.size);
++
++	/* then enforce corevariant RWX strict. */
++	set_vm_flush_reset_perms(cv->layout.base);
++	frob_corevariant_text(&cv->layout, set_memory_ro);
++	frob_corevariant_rodata(&cv->layout, set_memory_ro);
++	frob_corevariant_text(&cv->layout, set_memory_x);
++
++	/* then we can apply changes in trampoline with this corevariant. */
++	cv->status = CV_READY;
++	return 0;
++
++free_cvlayout:
++	/* Free lock-classes; relies on the preceding sync_rcu(). */
++	lockdep_free_key_range(cv->layout.base, cv->layout.size);
++	module_memfree(cv->layout.base);
++free_reloc_info:
++	free_reloc_info(cv);
++err_exit:
++	cv->status = CV_UNSET;
++	return -ENOMEM;
++}
++EXPORT_SYMBOL(generate_corevariant);
++
++// TODO: comment warn for sleep
++void free_corevariant(struct corevariant *cv)
++{
++	long status = READ_ONCE(cv->status);
++
++	might_sleep();
++	WARN(!in_task(), "%s should running in task context.\n", __func__);
++	WARN(status != CV_STOPPED && status != CV_DEACTIVATED &&
++		     status != CV_READY,
++	     "Unexpected corevariant(%px) status for freeing: %ld", cv,
++	     READ_ONCE(cv->status));
++
++	/* Not freeing lock classes at here, assumes that lock key relies on address in .data or heap/stack, not in .text */
++	lockdep_free_key_range(cv->layout.base, cv->layout.size);
++	module_memfree(cv->layout.base);
++	free_reloc_info(cv);
++	barrier();
++	WRITE_ONCE(cv->status, CV_UNSET);
++}
++EXPORT_SYMBOL(free_corevariant);
++
++void deactivate_corevariant(struct corevariant *cv)
++{
++	WARN_ON(READ_ONCE(cv->status) != CV_STOPPED);
++	frob_corevariant_text(&cv->layout, set_memory_nx);	
++	barrier();
++	WRITE_ONCE(cv->status, CV_DEACTIVATED);
++}
++EXPORT_SYMBOL(deactivate_corevariant);
++
++int apply_corevariant(struct corevariant *cv, const struct module *mod)
++{
++	int err;
++	struct modulevariants *mod_cv = mod->cv;
++
++	if (cv->status != CV_READY) {
++		pr_err("%s (corevaraint %p): not ready.\n", mod->name, cv);
++		return -EINVAL;
++	}
++
++	module_disable_ro(mod);
++	err = do_trampoline_relocation(mod_cv->core_info.shdr, cv,
++				       mod_cv->setup_info);
++	module_enable_ro(mod, true);
++	if (err)
++		goto fail_tramp_reloc;
++	cv->status = CV_RUNNING;
++	/*
++	 * kick_all_cpus_sync() will deadlock with trampoline in interrupt
++	 * disabled context.
++	 * However flush pipeline is required since we've played with text,
++	 * then we can send IPI before we finish rerandomization. 
++	 */
++	__flush_icache_range((unsigned long)mod->core_layout.base,
++			   (unsigned long)mod->core_layout.base + mod->core_layout.size);
++
++	/* no need symtab of CV anymore.
++	 * We can edit registers by using shdr->sh_addr and shdr->sh_size.
++	 */
++	kvfree(cv->cv_symtab);
++	cv->cv_symtab = NULL;
++
++	// TODO: change status in mod->cv?
++	return 0;
++
++fail_tramp_reloc:
++	return err;
++}
++EXPORT_SYMBOL(apply_corevariant);
+diff --git a/kernel/module-internal.h b/kernel/module-internal.h
+index 33783abc377b..c55ccd44b648 100644
+--- a/kernel/module-internal.h
++++ b/kernel/module-internal.h
+@@ -26,6 +26,14 @@ struct load_info {
+ 	struct {
+ 		unsigned int sym, str, mod, vers, info, pcpu;
+ 	} index;
++#ifdef CONFIG_MODULE_SETUP_CVINFO
++	int required_shuffle;
++	struct cv_setup_info *cvinfo;
++#endif
+ };
+ 
+ extern int mod_verify_sig(const void *mod, struct load_info *info);
++
++#ifdef CONFIG_ARM64_RERANDOM_SUPPORT
++extern int register_corevariant(struct module *mod, struct load_info *info);
++#endif
+diff --git a/kernel/module.c b/kernel/module.c
+index ce9da533526a..9c43631bb877 100644
+--- a/kernel/module.c
++++ b/kernel/module.c
+@@ -63,6 +63,9 @@
+ #include <linux/random.h>
+ #include <uapi/linux/module.h>
+ #include "module-internal.h"
++#ifdef CONFIG_MODULE_SETUP_CVINFO
++#include "corevariant-internal.h"
++#endif
+ 
+ #define CREATE_TRACE_POINTS
+ #include <trace/events/module.h>
+@@ -2235,6 +2238,10 @@ void __weak module_arch_freeing_init(struct module *mod)
+ {
+ }
+ 
++void __weak unload_corevariant_setup(struct module *mod)
++{
++}
++
+ /* Free a module, remove from lists, etc. */
+ static void free_module(struct module *mod)
+ {
+@@ -2280,6 +2287,8 @@ static void free_module(struct module *mod)
+ 	kfree(mod->args);
+ 	percpu_modfree(mod);
+ 
++	unload_corevariant_setup(mod);
++
+ 	/* Free lock-classes; relies on the preceding sync_rcu(). */
+ 	lockdep_free_key_range(mod->core_layout.base, mod->core_layout.size);
+ 
+@@ -2365,6 +2374,64 @@ static bool ignore_undef_symbol(Elf_Half emachine, const char *name)
+ 	return false;
+ }
+ 
++#ifdef CONFIG_MODULE_SETUP_CVINFO
++void free_cv_setup_info(struct cv_setup_info *info)
++{
++	if (info->ro_sechdrs)
++		vfree(info->ro_sechdrs);
++	if (info->ro_symtab)
++		vfree(info->ro_symtab);
++	kfree(info);
++}
++
++/*
++ * free_failed_cvinfo(): clear require_shuffle and free cv_setup_info
++ */
++static inline void free_failed_cvinfo(struct load_info *info)
++{
++	pr_debug("cv_setup_info freed.\n");
++	info->required_shuffle = false;
++	if (info->cvinfo)
++		free_cv_setup_info(info->cvinfo);
++	dump_stack();
++}
++
++static void copy_simplified_symtab(struct load_info *info)
++{
++	struct cv_setup_info *cvinfo = info->cvinfo;
++
++	if (info->required_shuffle) {
++		Elf_Shdr *symsec = &info->sechdrs[info->index.sym];
++		Elf_Sym *sym = (void *)symsec->sh_addr;
++		Elf_Sym *p;
++
++		p =  vmalloc(symsec->sh_size);
++		if (!p) {
++			free_failed_cvinfo(info);
++			return;
++		}
++		cvinfo->ro_symtab = p;
++		cvinfo->len_ro_symtab = symsec->sh_size / sizeof(Elf_Sym);
++		memcpy(cvinfo->ro_symtab, sym, symsec->sh_size);
++		pr_debug("Copied simplified symtab in %p, entry item: %d.\n",
++			 cvinfo->ro_symtab, cvinfo->len_ro_symtab);
++	}
++}
++
++static inline int setup_corevariant(struct module *mod, struct load_info *info)
++{
++	if (!(info->required_shuffle))
++		return 0;
++
++	return register_corevariant(mod, info);
++}
++
++#else
++static inline void copy_simplified_symtab(struct load_info *info)
++{
++}
++#endif
++
+ /* Change all symbols so that st_value encodes the pointer directly. */
+ static int simplify_symbols(struct module *mod, const struct load_info *info)
+ {
+@@ -2537,6 +2604,26 @@ static void randomize_text(struct module *mod, struct load_info *info)
+ 
+ 	shuffle_array(text_list, num_text_sections);
+ 
++#ifdef CONFIG_MODULE_SETUP_CVINFO
++	if (info->required_shuffle) {
++		/* make all .trampoline sections located in the front area */
++		int idx_last_non_trampoline = 0;
++
++		for (i = 0; i < num_text_sections; i++) {
++			Elf_Shdr *shdr = text_list[i];
++			const char *sname = info->secstrings + shdr->sh_name;
++
++			if (strstarts(sname, ".trampoline")) {
++				if (idx_last_non_trampoline != i)
++					swap(text_list[i],
++					     text_list[idx_last_non_trampoline]);
++				++idx_last_non_trampoline;
++			}
++		}
++	}
++#endif
++
++	pr_debug("Shuffled core section order:\n");
+ 	for (i = 0; i < num_text_sections; i++) {
+ 		Elf_Shdr *shdr = text_list[i];
+ 
+@@ -2549,8 +2636,22 @@ static void randomize_text(struct module *mod, struct load_info *info)
+ 		 * ignored.
+ 		 */
+ 		shdr->sh_entsize = get_offset(mod, &size, shdr, 0);
++		pr_debug("\t%d %s\n", i, info->secstrings + shdr->sh_name);
+ 	}
+ 
++#ifdef CONFIG_MODULE_SETUP_CVINFO
++	if (info->required_shuffle) {
++		/* copy section header table */
++		info->cvinfo->ro_sechdrs = vmalloc(sizeof(Elf_Shdr) * max_sections);
++		if (!(info->cvinfo->ro_sechdrs)) {
++			free_failed_cvinfo(info);
++			goto exit;
++		}
++		info->cvinfo->len_ro_sechdrs = max_sections;
++		memcpy(info->cvinfo->ro_sechdrs, info->sechdrs, sizeof(Elf_Shdr) * max_sections);
++	}
++#endif
++
+ exit:
+ 	kvfree(text_list);
+ }
+@@ -3257,7 +3358,12 @@ static int copy_module_from_user(const void __user *umod, unsigned long len,
+ 
+ static void free_copy(struct load_info *info)
+ {
++#ifdef CONFIG_MODULE_SETUP_CVINFO
++	if (!(info->required_shuffle))
++		vfree(info->hdr);
++#else
+ 	vfree(info->hdr);
++#endif
+ }
+ 
+ static int rewrite_section_headers(struct load_info *info, int flags)
+@@ -3294,6 +3400,7 @@ static int rewrite_section_headers(struct load_info *info, int flags)
+ static int setup_load_info(struct load_info *info, int flags)
+ {
+ 	unsigned int i;
++	char *val;
+ 
+ 	/* Try to find a name early so we can log errors with a module name */
+ 	info->index.info = find_sec(info, ".modinfo");
+@@ -3340,6 +3447,24 @@ static int setup_load_info(struct load_info *info, int flags)
+ 
+ 	info->index.pcpu = find_pcpusec(info);
+ 
++#ifdef CONFIG_MODULE_SETUP_CVINFO
++	val = get_modinfo(info, "shuffle");
++	if (val && (strcmp("1", val) == 0)) {
++		pr_debug("Module %s require shuffle.\n", info->name);
++		info->required_shuffle = 1;
++		info->cvinfo =
++			kzalloc(sizeof(struct cv_setup_info), GFP_KERNEL);
++		if (!(info->cvinfo)) {
++			free_failed_cvinfo(info);
++			return 0;
++		}
++		info->cvinfo->orig_hdr = info->hdr;
++		/* secstrtab and strtab are placed in ELF, simpily set pointers to them. */
++		info->cvinfo->secstrings = info->secstrings;
++		info->cvinfo->strtab = info->strtab;
++	}
++#endif
++
+ 	return 0;
+ }
+ 
+@@ -3567,6 +3692,11 @@ static int move_module(struct module *mod, struct load_info *info)
+ 			 (long)shdr->sh_addr, info->secstrings + shdr->sh_name);
+ 	}
+ 
++#ifdef CONFIG_MODULE_SETUP_CVINFO
++	if (info->required_shuffle)
++		info->cvinfo->roabs_sechdrs = info->sechdrs;
++#endif
++
+ 	return 0;
+ }
+ 
+@@ -4140,6 +4270,8 @@ static int load_module(struct load_info *info, const char __user *uargs,
+ 	if (err < 0)
+ 		goto free_modinfo;
+ 
++	copy_simplified_symtab(info);
++
+ 	err = apply_relocations(mod, info);
+ 	if (err < 0)
+ 		goto free_modinfo;
+@@ -4148,6 +4280,12 @@ static int load_module(struct load_info *info, const char __user *uargs,
+ 	if (err < 0)
+ 		goto free_modinfo;
+ 
++#ifdef CONFIG_ARM64_RERANDOM_SUPPORT
++	err = setup_corevariant(mod, info);
++	if (err < 0)
++		free_failed_cvinfo(info);
++#endif
++
+ 	flush_module_icache(mod);
+ 
+ 	/* Now copy in args */
+diff --git a/kernel/randmod.c b/kernel/randmod.c
+new file mode 100644
+index 000000000000..d20861dc2f77
+--- /dev/null
++++ b/kernel/randmod.c
+@@ -0,0 +1,470 @@
++#include <linux/spinlock.h>
++#include <asm/randmod.h>
++#include <linux/module.h>
++#include <linux/kernel.h>
++#include <linux/init.h>
++#include <linux/sysfs.h>
++#include <linux/string.h>
++#include <linux/list.h>
++#include <linux/delay.h>
++#include <linux/module_corevariant.h>
++#include <linux/sched.h>
++#include <linux/kthread.h>
++
++// variable used to indicate period of doing rerandomizing
++static unsigned long rand_period = 5000000UL;
++static struct kobject *rand_kobj;
++static const int time_out_iter = 3;
++
++static void list_del_init_all(struct list_head *head)
++{
++	struct list_head *pos, *next;
++
++	list_for_each_safe(pos, next, head) {
++		list_del_init(pos);
++	}
++}
++
++static ssize_t rand_period_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
++{
++	return sprintf(buf, "%lu\n", rand_period);
++}
++
++static ssize_t rand_period_store(struct kobject *kobj, struct kobj_attribute *attr, const char *buf, size_t count)
++{
++	if (sscanf(buf, "%lu", &rand_period) != 1) {
++		return -EINVAL;
++	}
++	return count;
++}
++
++static struct kobj_attribute rand_period_attr = __ATTR(rand_period, 0664, rand_period_show, rand_period_store);
++
++static ssize_t rand_modules_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
++{
++	size_t i;
++	ssize_t len = 0;
++
++	for (i = 0; i < module_count; ++i) {
++		len += sprintf(buf + len, "%s\n", rand_modules[i]);
++	}
++	return len;
++}
++
++static ssize_t rand_modules_store(struct kobject *kobj, struct kobj_attribute *attr, const char *buf, size_t count)
++{
++	size_t i, j;
++	char op;
++	char module_name[MODULE_NAME_LEN];
++
++	memset(module_name, 0, sizeof(module_name));
++
++	if (sscanf(buf, "%c%s", &op, module_name) == 2) {
++		// check if module(module_name) is loaded
++		struct module *mod = find_module(module_name);
++
++		if (!mod) {
++			pr_err("Module %s is not loaded.\n", module_name);
++			return -ENOENT;
++		}
++
++		if (op == '+') {
++			for (i = 0; i < module_count; ++i) {
++				if (strcmp(rand_modules[i], module_name) == 0) {
++					pr_err("randmod:  %s already add", module_name);
++					return -EEXIST;
++				}
++			}
++			// add module
++			if (module_count >= MAX_RANDMOD_MODULES) {
++				pr_err("Module list is full.\n");
++				return -ENOSPC;
++			}
++			// add module name to array
++			strcpy(rand_modules[module_count], module_name);
++			module_count++;
++			pr_info("Module %s is added.\n", module_name);
++			return count;
++		} else if (op == '-') {
++			// delete module
++			for (i = 0; i < module_count; ++i) {
++				// find module & replace it by last element
++				if (strcmp(rand_modules[i], module_name) == 0) {
++					for (j = 0; j < time_out_iter && i == randomize_module_index; j++) {
++						msleep(rand_period / 3);
++					}
++
++					spin_lock(&randmod_thread_lock);
++					if (randomize_module_index == i) {
++						spin_unlock(&randmod_thread_lock);
++						pr_err("randmod: wait for %s to complete rerandomization timeout.", module_name);
++						return -EBUSY;
++					}
++
++					memmove(rand_modules + i, rand_modules + module_count - 1, sizeof(rand_modules[0]));
++					// clear list of module by reinit it
++					list_del_init_all(&randmod_thread_list[i]);
++					list_splice(&randmod_thread_list[module_count - 1], &randmod_thread_list[i]);
++
++					spin_unlock(&randmod_thread_lock);
++					module_count--;
++					pr_info("Module %s is removed.\n", module_name);
++					return count;
++				}
++			}
++			pr_err("Module %s is not found.\n", module_name);
++			return -ENOENT;
++		}
++	}
++	return -EINVAL;
++}
++
++static struct kobj_attribute rand_modules_attr = __ATTR(rand_modules, 0664, rand_modules_show, rand_modules_store);
++
++static inline const char *preempt_to_str(char buf[5], struct task_struct *tsk)
++{
++	typeof(tsk->thread_info.preempt_count) task_preempt_cnt =
++		tsk->thread_info.preempt_count;
++
++	if (IS_ENABLED(CONFIG_PREEMPT_COUNT))
++		buf[0] = (task_preempt_cnt & PREEMPT_MASK) ? 'A' : 'T';
++	else
++		buf[0] = 't';
++
++	buf[1] = (task_preempt_cnt & SOFTIRQ_MASK) ? 'S' : '.';
++	buf[2] = (task_preempt_cnt & HARDIRQ_MASK) ? 'H' : '.';
++	buf[3] = (task_preempt_cnt & NMI_MASK) ? 'N' : '.';
++	buf[4] = 0;
++
++	return buf;
++}
++
++static inline void resume_tasks(struct list_head *se_list)
++{
++	struct sched_entity *pos;
++	struct task_struct *tsk;
++
++	if(WARN_ON(!spin_is_locked(&randmod_thread_lock)))
++		return;
++
++	list_for_each_entry(pos, se_list, randmod_node) {
++		BUG_ON(pos->my_q);
++		tsk = container_of_safe(pos, struct task_struct, se);
++		WRITE_ONCE(tsk->randmod_skip_flag, false);
++	}
++}
++/* might sleep, don't call it in interrupt context! */
++static void rerandomize(int index)
++{
++	struct module *mod;
++	bool allstop = true;
++	struct sched_entity *pos;
++	struct corevariant *activated_cv;
++	struct corevariant *cv_wait_to_apply = NULL;
++	struct corevariant *cv_wait_to_free = NULL;
++	int err;
++	struct list_head *se_list;
++	unsigned long irqflags;
++
++	const char *module_name = rand_modules[index];
++
++	if(!mutex_trylock(&module_mutex))
++		return;
++
++	pr_debug("Do rerandomize for %s.\n", module_name);
++	mod = find_module(module_name);
++	if (!mod) {
++		pr_warn("module not found for randomize: %s\n", module_name);
++		goto early_unlock_mutex;
++	}
++
++	if(!try_module_get(mod))
++	{
++		pr_warn("unable to get module %s\n", module_name);
++		goto early_unlock_mutex;
++	}
++	mutex_unlock(&module_mutex);
++
++	if (!mod->cv) {
++		pr_warn("module %s not support corevariant.\n", module_name);
++		goto exit_module_put;
++	}
++
++	activated_cv = &mod->cv->vars[0];
++	cv_wait_to_apply = &mod->cv->vars[1];
++	if (activated_cv->status != CV_RUNNING)
++		swap(activated_cv, cv_wait_to_apply);
++	if (CHECK_DATA_CORRUPTION(
++		    activated_cv->status != CV_RUNNING,
++		    "Corevaraint inconsistence in %s: vars %px should be activated, but got (%ld)\n",
++		    module_name, activated_cv, activated_cv->status) ||
++	    CHECK_DATA_CORRUPTION(
++		    cv_wait_to_apply->status != CV_UNSET,
++		    "Corevaraint inconsistence in %s: vars %px should be unformed, but got (%ld)\n",
++		    module_name, cv_wait_to_apply, cv_wait_to_apply->status)) {
++		pr_warn("module %s corevariant check failed.\n", module_name);
++		goto exit_module_put;
++	}
++	
++	err = generate_corevariant(cv_wait_to_apply, mod->cv->setup_info);
++	if (err) {
++		pr_warn("generate new corevariant failed for %s, errcode: %d\n",
++			module_name, err);
++		goto exit_module_put;
++	}
++	/* if failed, free newly generated corevariant. */
++	cv_wait_to_free = cv_wait_to_apply;
++
++	/* CRITICAL ZONE: LOCK LOCAL INTERRUPTS*/
++	local_irq_save(irqflags);
++	spin_lock(&randmod_thread_lock);
++	randomize_module_index = index;
++	spin_unlock(&randmod_thread_lock);
++
++	mod->cv->status = CV_REFORMING;
++	barrier();
++	se_list = &randmod_thread_list[randomize_module_index];
++
++	spin_lock(&randmod_thread_lock);
++	list_for_each_entry(pos, se_list, randmod_node) {
++		struct task_struct *tsk;
++		bool tsk_running;
++
++		BUG_ON(pos->my_q);
++		tsk = container_of_safe(pos, struct task_struct, se);
++		tsk_running = READ_ONCE(tsk->on_cpu);
++
++		allstop = allstop & (!tsk_running);
++		if (READ_ONCE(tsk->thread_info.preempt_count) == 0)
++			WRITE_ONCE(tsk->randmod_skip_flag, true);
++	}
++	smp_mb();
++	spin_unlock(&randmod_thread_lock);
++
++	if (!allstop) {
++		// TODO: currently use 1000/CONFIG_HZ as sched_latency
++		unsigned long sched_latency =
++			DIV_ROUND_CLOSEST(1000, CONFIG_HZ);
++		mdelay(2 * sched_latency);
++
++		spin_lock(&randmod_thread_lock);
++		list_for_each_entry(pos, se_list, randmod_node) {
++			struct task_struct *tsk;
++			char task_buffer[5]= {0};
++
++			BUG_ON(pos->my_q);
++			tsk = container_of_safe(pos, struct task_struct, se);
++			if (READ_ONCE(tsk->on_cpu)) {
++				pr_err("randomized failed for %s: PID %u [%s] running on a cpu.\n",
++				       module_name, tsk->pid, preempt_to_str(task_buffer, tsk));
++				goto fail_quit_resume_locked_irq;
++			}
++		}
++		spin_unlock(&randmod_thread_lock);
++	}
++
++	err = apply_corevariant(cv_wait_to_apply, mod);
++	if (err) {
++		pr_warn("apply new corevariant failed for %s, errcode: %d\n",
++			module_name, err);
++		goto fail_quit_resume_irq;
++	}
++	WRITE_ONCE(activated_cv->status, CV_STOPPED);
++	barrier();
++
++	pr_info("activate new corevariant for %s, %px -> %px\n", module_name,
++		cv_wait_to_apply->layout.base,
++		cv_wait_to_apply->layout.size + cv_wait_to_apply->layout.base);
++
++	deactivate_corevariant(activated_cv);
++	pr_info("deactivated old corevariant for %s, %px -> %px\n", module_name,
++		activated_cv->layout.base,
++		activated_cv->layout.size + activated_cv->layout.base);
++
++	cv_wait_to_free = activated_cv;
++
++	/* neither tasks nor interrupts can call modules here */
++	list_for_each_entry (pos, se_list, randmod_node) {
++		struct task_struct *tsk;
++		BUG_ON(pos->my_q);
++		tsk = container_of_safe(pos, struct task_struct, se);
++
++		err = replace_retaddr(tsk, activated_cv, cv_wait_to_apply);
++
++		/* hard to undo operation with corrupted shadow call stack */
++		WARN(err != 0,
++		    "BUG: replace retaddr failed (%d), shadow call stack corrupted for task %d(=%px)\n",
++		    err, tsk->pid, tsk);
++	}
++	smp_mb();
++	pr_info("allow new corevariant to run in interrupts for %s\n", module_name);
++	WRITE_ONCE(mod->cv->status, CV_FLUSH_REQUIRED);
++	smp_mb();
++
++	/*
++	 * OK for unlock local irq: affected interrupt should not hang
++	 * since `CV_FLUSH_REQUIRED` has been set in modulevariant
++	 */
++	local_irq_restore(irqflags);
++
++	kick_all_cpus_sync();
++
++	spin_lock_irqsave(&randmod_thread_lock, irqflags);
++	resume_tasks(se_list);
++	smp_mb();
++
++	randomize_module_index = -1;
++	spin_unlock_irqrestore(&randmod_thread_lock, irqflags);
++
++	if (unlikely(!CHECK_DATA_CORRUPTION(
++		    cv_wait_to_free != activated_cv,
++		    "Corevariant inconsistent in %s: wants to free %px is not previous activated(=%px).\n",
++		    module_name, cv_wait_to_free, activated_cv)))
++		free_corevariant(cv_wait_to_free);
++
++
++exit_module_put:
++	module_put(mod);
++	WRITE_ONCE(mod->cv->status, CV_RUNNING);
++	smp_mb();
++	return;
++
++early_unlock_mutex:
++	mutex_unlock(&module_mutex);
++	return;
++
++fail_quit_resume_irq:
++	/* continue with LOCAL IRQ DISABLED */
++	spin_lock(&randmod_thread_lock);
++fail_quit_resume_locked_irq:
++	resume_tasks(se_list);
++	randomize_module_index = -1;
++	spin_unlock(&randmod_thread_lock);
++	local_irq_restore(irqflags);
++
++	free_corevariant(cv_wait_to_free);
++
++	module_put(mod);
++	return;
++}
++
++void randmod_timer_callback(struct timer_list *timer)
++{
++	size_t i;
++
++	pr_debug("randmod: Start rerandomize!\n");
++	for (i = 0; i < module_count; ++i) {
++		// do rerandomizing
++		if (randomize_module_index != -1) {
++			pr_err("randmod: module %s is randomizing.\n",
++			       rand_modules[randomize_module_index]);
++			goto reset_timer;
++		}
++		rerandomize(i);
++	}
++reset_timer:
++	return;
++}
++
++static int shuffle_thread(void* __unused)
++{
++	while(!kthread_should_stop())
++	{
++		randmod_timer_callback(NULL);
++		msleep(rand_period/1000);
++	}
++
++	return 0;
++};
++
++struct task_struct* shuffle_thread_task;
++
++static int __init randmod_init(void)
++{
++	int err;
++	size_t i;
++
++	module_count = 0;
++	randomize_module_index = -1;
++
++	spin_lock_init(&randmod_thread_lock);
++	for (i = 0; i < MAX_RANDMOD_MODULES; i++) {
++		INIT_LIST_HEAD(&randmod_thread_list[i]);
++	}
++
++	// create randmod dir in sysfs
++	rand_kobj = kobject_create_and_add("randmod", kernel_kobj);
++	if (!rand_kobj) {
++		pr_err("randmod: Failed to create sysfs directory\n");
++		return -ENOMEM;
++	}
++
++	// create /sys/kernel/randmod/rand_period
++	err = sysfs_create_file(rand_kobj, &rand_period_attr.attr);
++	if (err) {
++		pr_err("randmod: Failed to create sysfs file\n");
++		kobject_put(rand_kobj);
++		return err;
++	}
++
++	// create /sys/kernel/randmod/rand_modules
++	err = sysfs_create_file(rand_kobj, &rand_modules_attr.attr);
++	if (err) {
++		pr_err("randmod: Failed to create sysfs file\n");
++		kobject_put(rand_kobj);
++		return err;
++	}
++
++	shuffle_thread_task = kthread_run(shuffle_thread, NULL, "randmodd");
++	if(shuffle_thread_task == NULL)
++	{
++		pr_err("randmod: Failed to create shuffle thread\n");
++		goto init_fail;
++	}
++
++	pr_info("randmod: Initializing OK.\n");
++
++	return 0;
++
++init_fail:
++	kobject_put(rand_kobj);
++	return err;
++}
++
++static void __exit randmod_exit(void)
++{
++	size_t i;
++	// delete /sys/kernel/randmod/rand_period & /sys/kernel/randmod/rand_modules
++	sysfs_remove_file(rand_kobj, &rand_period_attr.attr);
++	sysfs_remove_file(rand_kobj, &rand_modules_attr.attr);
++	kobject_put(rand_kobj);
++
++	for (i = 0; i < time_out_iter && randomize_module_index != -1; i++) {
++		msleep(rand_period);
++	}
++
++	spin_lock(&randmod_thread_lock);
++	if (randomize_module_index != -1) {
++		pr_err("randmod: wait for all modules to complete rerandomization timeout.");
++	}
++
++	for (i = 0; i < module_count; i++) {
++		list_del_init_all(&randmod_thread_list[i]);
++	}
++
++	module_count = 0;
++	spin_unlock(&randmod_thread_lock);
++
++	randomize_module_index = -1;
++	kthread_stop(shuffle_thread_task);
++
++	pr_info("randmod: Exiting OK.\n");
++}
++
++module_init(randmod_init);
++module_exit(randmod_exit);
++
++MODULE_LICENSE("GPL");
++MODULE_AUTHOR("Zihao Chang");
++MODULE_DESCRIPTION("Randmod Module with Sysfs Interface");
++MODULE_VERSION("1.0");
+diff --git a/kernel/randmod_utils.c b/kernel/randmod_utils.c
+new file mode 100644
+index 000000000000..2a9c6d4fa1e8
+--- /dev/null
++++ b/kernel/randmod_utils.c
+@@ -0,0 +1,225 @@
++#include <linux/string.h>
++#include <linux/sched.h>
++#include <linux/scs.h>
++#include <linux/list.h>
++#include <asm/randmod.h>
++#include <linux/module_corevariant.h>
++
++// names of modules maneged by randmod
++char rand_modules[MAX_RANDMOD_MODULES][MODULE_NAME_LEN];
++EXPORT_SYMBOL(rand_modules);
++// num of modules managed by randmod
++int module_count;
++EXPORT_SYMBOL(module_count);
++// every rerandmoize module have a randmod thread list
++struct list_head randmod_thread_list[MAX_RANDMOD_MODULES];
++EXPORT_SYMBOL(randmod_thread_list);
++
++// lock for operating each list
++DEFINE_SPINLOCK(randmod_thread_lock);
++EXPORT_SYMBOL(randmod_thread_lock);
++
++// variable used to indicate index of module doing rerandomizing
++volatile int randomize_module_index;
++EXPORT_SYMBOL(randomize_module_index);
++
++static void add_rand_thread(struct sched_entity *se, const struct module* mod)
++{
++	int index = -1;
++	const char* name = mod->name;
++
++	if (module_count == 0 || !(mod->cv))
++		return;
++
++	while (true) {
++		bool able_to_pass = false;
++		unsigned long irqflags;
++		int task_context = in_task();
++		int irqtag = irqs_disabled();
++		bool atomic_required = !task_context || irqtag;
++
++		spin_lock_irqsave(&randmod_thread_lock, irqflags);
++		index = find_module_index_by_name(name);
++
++		if (index == -1 || index >= module_count) {
++			pr_debug("randmod: not found module %s\n", name);
++			spin_unlock_irqrestore(&randmod_thread_lock, irqflags);
++			break;
++		}
++		if(index != randomize_module_index)
++			able_to_pass = true;
++
++		if (atomic_required &&
++		    READ_ONCE(mod->cv->status) == CV_FLUSH_REQUIRED) {
++			/* 
++			 * require CPU refetch instructions, otherwise the CPU may
++			 * commits the old instructions after we changed text.
++			 */
++			isb();
++			able_to_pass = true;
++		}
++		if (able_to_pass) {
++			/* may use atomic_t if fine-grained lock operations are required */
++			if (likely(se->randmod_refcnt == 0))
++				list_add(&se->randmod_node, &randmod_thread_list[index]);
++			se->randmod_refcnt += 1;
++			spin_unlock_irqrestore(&randmod_thread_lock, irqflags);
++			break;
++		}
++
++		spin_unlock_irqrestore(&randmod_thread_lock, irqflags);
++		cpu_relax();
++		continue;
++	}
++}
++
++static void del_rand_thread(struct sched_entity *se, const struct module *mod)
++{
++	int index = -1;
++	const char* name = mod->name;
++
++	if (module_count == 0 || !(mod->cv))
++		return;
++
++	do{
++		unsigned long irqflags;
++		bool allow_quit = true;
++
++		spin_lock_irqsave(&randmod_thread_lock, irqflags);
++		index = find_module_index_by_name(name);
++		if (index == -1 || index >= module_count) {
++			pr_debug("randmod: not found module %s\n", name);
++			spin_unlock_irqrestore(&randmod_thread_lock, irqflags);
++			break;
++		}
++
++		/* make task quit in any status? */
++		if (allow_quit) {
++			se->randmod_refcnt -= 1;
++			if (unlikely(se->randmod_refcnt < 0)) {
++				pr_warn("module %s: try to remove an empty node in trampoline\n",
++					name);
++				se->randmod_refcnt = 0;
++			} else if (likely(se->randmod_refcnt == 0)) {
++				struct task_struct *tsk = container_of(
++					se, struct task_struct, se);
++				if (CHECK_DATA_CORRUPTION(
++					    READ_ONCE(tsk->randmod_skip_flag) ==
++						    true,
++					    "randmod: skip flag set when exit from trampoline, PID %d [%s]\n",
++					    tsk->pid,
++					    in_task() ? "TASK" : "IRQ"))
++					WRITE_ONCE(tsk->randmod_skip_flag,
++						   false);
++				list_del(&se->randmod_node);
++			}
++			spin_unlock_irqrestore(&randmod_thread_lock, irqflags);
++			break;
++		}
++
++		if (unlikely(READ_ONCE(mod->cv->status) == CV_FLUSH_REQUIRED))
++			isb();
++		break;
++	} while(0);
++}
++
++int find_module_index_by_name(const char *name)
++{
++	size_t i;
++
++	for (i = 0; i < module_count; i++) {
++		if (strcmp(name, rand_modules[i]) == 0)
++			return i;
++	}
++	return -1;
++}
++
++noinline void add_rand_curr(const struct module *mod)
++{
++	add_rand_thread(&current->se, mod);
++}
++EXPORT_SYMBOL(add_rand_curr);
++
++
++noinline void del_rand_curr(const struct module *mod)
++{
++	del_rand_thread(&current->se, mod);
++}
++EXPORT_SYMBOL(del_rand_curr);
++
++u64 get_new_address(u64 ptr, const Elf64_Shdr *origin_shdr,
++			   const Elf64_Shdr *new_shdr,
++			   const unsigned long len_sechdr)
++{
++	u64 idx;
++
++	for (idx = 1; idx < len_sechdr; idx++) {
++		const Elf64_Shdr *shdr = &origin_shdr[idx];
++		u64 secbegin = shdr->sh_addr;
++		u64 secend = shdr->sh_addr + shdr->sh_size;
++		u64 offset;
++		u64 new_addr;
++
++		if ((shdr->sh_flags & SHF_ALLOC) != SHF_ALLOC)
++			continue;
++
++		if (secbegin > ptr || secend < ptr)
++			continue;
++
++		offset = ptr - secbegin;
++		new_addr = new_shdr[idx].sh_addr + offset;
++		if (new_addr < new_shdr[idx].sh_addr || new_addr < offset) {
++			pr_err("overflow in section %d (new base %LX), ptr %Lx (%Lx + %Lx).\n",
++			       idx, new_shdr[idx].sh_addr, ptr, secbegin,
++			       offset);
++			return -ERANGE;
++		}
++		return new_addr;
++	}
++	pr_err("matched section not found with ptr %Lx.\n", ptr);
++	return -ERANGE;
++}
++
++static int do_modify_retaddr(u64 *place, const struct corevariant *old,
++			     const struct corevariant *new)
++{
++	u64 new_val;
++	u64 old_val = *place;
++
++	if (!within_corevariant(old_val, old))
++		return 0;
++	new_val = get_new_address(old_val, old->cv_sechdr, new->cv_sechdr,
++				  old->cv_sechdr_len);
++
++	if (new_val == -ERANGE)
++		return -ERANGE;
++
++	*place = new_val;
++	return 0;
++}
++
++int replace_retaddr(struct task_struct *tsk, const struct corevariant *old,
++		    const struct corevariant *new)
++{
++	u64 pc = thread_saved_pc(tsk);
++	/*
++	 * Don't care about LR: LR will be stored into stack when scheduler
++	 * is called, which is only way to switch context if preemption in
++	 * kernel mode has been disabled.
++	 */
++
++	u64 *scs_base = task_scs(tsk);
++	u64 *scs_sp = task_scs_sp(tsk);
++
++	if (do_modify_retaddr(&pc, old, new) == -ERANGE)
++		return -ERANGE;
++
++	for(; scs_sp > scs_base; scs_sp--) {
++		if (do_modify_retaddr(scs_sp, old, new) == -ERANGE)
++			return -ERANGE;
++	}
++	pr_debug("replaced PC for tsk %d: %Lx -> %Lx\n", tsk->pid,thread_saved_pc(tsk),pc);
++	tsk->thread.cpu_context.pc = pc;
++	return 0;
++}
++EXPORT_SYMBOL(replace_retaddr);
+\ No newline at end of file
+diff --git a/kernel/sched/core.c b/kernel/sched/core.c
+index 454bca0c9c6b..7f856fa64c10 100644
+--- a/kernel/sched/core.c
++++ b/kernel/sched/core.c
+@@ -3462,6 +3462,9 @@ static void __sched_fork(unsigned long clone_flags, struct task_struct *p)
+ 	p->se.nr_migrations		= 0;
+ 	p->se.vruntime			= 0;
+ 	INIT_LIST_HEAD(&p->se.group_node);
++#ifdef CONFIG_ARM64_RERANDOM_SUPPORT
++	p->se.randmod_refcnt 		= 0;
++#endif
+ 
+ #ifdef CONFIG_FAIR_GROUP_SCHED
+ 	p->se.cfs_rq			= NULL;
+diff --git a/kernel/sched/fair.c b/kernel/sched/fair.c
+index 2ea70af5c962..e77ac3efeced 100644
+--- a/kernel/sched/fair.c
++++ b/kernel/sched/fair.c
+@@ -29,6 +29,9 @@
+ #include <linux/tracehook.h>
+ #endif
+ #include <linux/bpf_sched.h>
++#ifdef CONFIG_ARM64_RERANDOM_SUPPORT
++#include <linux/module.h>
++#endif
+ 
+ /*
+  * Targeted preemption latency for CPU-bound tasks:
+@@ -4735,6 +4738,22 @@ set_next_entity(struct cfs_rq *cfs_rq, struct sched_entity *se)
+ static int
+ wakeup_preempt_entity(struct sched_entity *curr, struct sched_entity *se);
+ 
++#ifdef CONFIG_ARM64_RERANDOM_SUPPORT
++static bool randmod_need_skip(struct sched_entity *se)
++{
++	struct task_struct *task;
++
++	if (!se)
++		return false;
++
++	task = task_of(se);
++	if (task->randmod_skip_flag)
++		return true;
++
++	return false;
++}
++#endif
++
+ /*
+  * Pick the next process, keeping these things in mind, in this order:
+  * 1) keep things fair between processes/task groups
+@@ -4747,6 +4766,9 @@ pick_next_entity(struct cfs_rq *cfs_rq, struct sched_entity *curr)
+ {
+ 	struct sched_entity *left = __pick_first_entity(cfs_rq);
+ 	struct sched_entity *se;
++#ifdef CONFIG_ARM64_RERANDOM_SUPPORT
++	struct sched_entity *randmod_candidate;
++#endif
+ 
+ 	/*
+ 	 * If curr is set we have to see if its left of the leftmost entity
+@@ -4776,12 +4798,41 @@ pick_next_entity(struct cfs_rq *cfs_rq, struct sched_entity *curr)
+ 			se = second;
+ 	}
+ 
++	/*
++	 * Avoid running kernel thread in doing randimozing
++	 */
++#ifdef CONFIG_ARM64_RERANDOM_SUPPORT
++	if (module_count > 0 && randmod_need_skip(se) && __pick_first_entity(cfs_rq)) {
++		randmod_candidate = __pick_next_entity(se);
++
++		while (randmod_candidate != se) {
++			if (randmod_candidate == NULL) {
++				randmod_candidate = __pick_first_entity(cfs_rq);
++				continue;
++			}
++			if (!randmod_need_skip(randmod_candidate)) {
++				break;
++			}
++			randmod_candidate = __pick_next_entity(randmod_candidate);
++		}
++		se = randmod_candidate;
++	}
++
++	if (cfs_rq->next && !randmod_need_skip(cfs_rq->next) &&
++	    wakeup_preempt_entity(cfs_rq->next, left) < 1) {
++#else
+ 	if (cfs_rq->next && wakeup_preempt_entity(cfs_rq->next, left) < 1) {
++#endif
+ 		/*
+ 		 * Someone really wants this to run. If it's not unfair, run it.
+ 		 */
+ 		se = cfs_rq->next;
++#ifdef CONFIG_ARM64_RERANDOM_SUPPORT
++	} else if (cfs_rq->last && !randmod_need_skip(cfs_rq->last) &&
++		   wakeup_preempt_entity(cfs_rq->last, left) < 1) {
++#else
+ 	} else if (cfs_rq->last && wakeup_preempt_entity(cfs_rq->last, left) < 1) {
++#endif
+ 		/*
+ 		 * Prefer last buddy, try to return the CPU to a preempted task.
+ 		 */
+@@ -8266,6 +8317,45 @@ pick_next_task_fair(struct rq *rq, struct task_struct *prev, struct rq_flags *rf
+ 	if (!sched_fair_runnable(rq))
+ 		goto idle;
+ 
++#ifdef CONFIG_ARM64_RERANDOM_SUPPORT
++	/* check if task->randmod_skip_flag is false */
++	for (se = __pick_first_entity(&rq->cfs); se != NULL; se = __pick_next_entity(se)) {
++		if (!task_of(se)->randmod_skip_flag) {
++			break;
++		}
++	}
++
++	/* if se == NULL (all task->randmod_skip_flag is true)
++	*		if (condition 1: prev == NULL, curr is idle
++	*			condition 2: prev->randmod_skip_flag == true, prev need skip
++	*			condition 3: prev->state == 0, prev now is not runnable)
++	*				prev_continue_to_run
++	*		else (no runnable task)
++	*			goto idle
++	*  else
++	* 		no_action_need
++	*/
++	if (!se) {
++		if (prev != NULL && !prev->randmod_skip_flag && prev->state == 0) {
++			p = prev;
++			return p;
++		}
++
++		new_tasks = 0;
++		if (!rf)
++			return NULL;
++
++		time = schedstat_start_time();
++
++		/*
++		* We must set idle_stamp _before_ calling try_steal() or
++		* idle_balance(), such that we measure the duration as idle time.
++		*/
++		rq_idle_stamp_update(rq);
++		goto idle_without_check;
++	}
++#endif
++
+ #ifdef CONFIG_FAIR_GROUP_SCHED
+ 	if (!prev || prev->sched_class != &fair_sched_class) {
+ #ifdef CONFIG_QOS_SCHED
+@@ -8445,6 +8535,8 @@ done: __maybe_unused;
+ 	new_tasks = newidle_balance(rq, rf);
+ 	if (new_tasks == 0)
+ 		new_tasks = try_steal(rq, rf);
++
++idle_without_check:
+ 	schedstat_end_time(rq, time);
+ 
+ 	if (new_tasks)
+diff --git a/lib/Kconfig.debug b/lib/Kconfig.debug
+index 5839cfdc160c..85bd3512d065 100644
+--- a/lib/Kconfig.debug
++++ b/lib/Kconfig.debug
+@@ -1773,6 +1773,28 @@ source "arch/$(SRCARCH)/Kconfig.debug"
+ 
+ endmenu
+ 
++menuconfig DEBUG_COREVARIANT
++	bool "Debug corevariants"
++	depends on DEBUG_KERNEL && ARM64_RERANDOM_SUPPORT
++	help
++	  Enable this to turn on extended checks in the corevariant
++	  routines.
++
++	  If unsure, say N.
++
++if DEBUG_COREVARIANT
++
++config DEBUG_COREVARIANT_ALTSWAP
++	bool "Debug alt_instr swap routines in Corevariants"
++	depends on DEBUG_COREVARIANT
++	help
++	  Enable this to turn on checks in the swap routines for struct
++	  alt_instr.
++	  
++	  If unsure, say N.
++
++endif #DEBUG_COREVARIANT
++
+ menu "Kernel Testing and Coverage"
+ 
+ source "lib/kunit/Kconfig"
+diff --git a/lib/Makefile b/lib/Makefile
+index a803e1527c4b..d70939320729 100644
+--- a/lib/Makefile
++++ b/lib/Makefile
+@@ -158,6 +158,8 @@ obj-$(CONFIG_DEBUG_PREEMPT) += smp_processor_id.o
+ obj-$(CONFIG_DEBUG_LIST) += list_debug.o
+ obj-$(CONFIG_DEBUG_OBJECTS) += debugobjects.o
+ 
++obj-$(CONFIG_DEBUG_COREVARIANT) += corevariant_debug.o
++
+ obj-$(CONFIG_BITREVERSE) += bitrev.o
+ obj-$(CONFIG_LINEAR_RANGES) += linear_ranges.o
+ obj-$(CONFIG_PACKING)	+= packing.o
+diff --git a/lib/corevariant_debug.c b/lib/corevariant_debug.c
+new file mode 100644
+index 000000000000..2bab6b044922
+--- /dev/null
++++ b/lib/corevariant_debug.c
+@@ -0,0 +1,28 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++#include <linux/module_corevariant.h>
++#include <linux/bug.h>
++
++bool __symbol_type_valid(const Elf_Sym *target, const Elf_Sym *source,
++			 const char *strtab)
++{
++	const char *symname = ELF_ST_TYPE(source->st_info) == STT_SECTION ?
++				      "(SECTIONS)" : strtab + target->st_name;
++
++	if (CHECK_DATA_CORRUPTION(
++		    target->st_name != source->st_name &&
++			    strcmp(strtab + target->st_name,
++				   strtab + source->st_name),
++		    "symbol name mismatch: target: %u(%s), source %u(%s).\n",
++		    target->st_name, strtab + target->st_name, source->st_name,
++		    strtab + source->st_name) ||
++	    CHECK_DATA_CORRUPTION(
++		    target->st_info != source->st_info,
++		    "symbol type mismatch in %s: target %u, source %u\n",
++		    symname, target->st_info, source->st_info) ||
++	    CHECK_DATA_CORRUPTION(
++		    target->st_shndx != source->st_shndx,
++		    "symbol section index mismatch in %s: target %u, source %u",
++		    symname, target->st_shndx, source->st_shndx))
++		return false;
++	return true;
++}
+diff --git a/samples/Kconfig b/samples/Kconfig
+index b5a1a7aa7e23..a97ba978a21a 100644
+--- a/samples/Kconfig
++++ b/samples/Kconfig
+@@ -6,6 +6,12 @@ menuconfig SAMPLES
+ 
+ if SAMPLES
+ 
++config SAMPLE_RERANDOMIZABLE_LKM
++	tristate "Build rerandomizable kernel module example -- loadable only"
++	depends on ARM64_RANDOM_MODULE && m
++	help
++	  This builds rerandomizable loadable kernel example module.
++
+ config SAMPLE_AUXDISPLAY
+ 	bool "auxdisplay sample"
+ 	depends on CC_CAN_LINK
+@@ -223,4 +229,7 @@ config SAMPLE_WATCH_QUEUE
+ 	  Build example userspace program to use the new mount_notify(),
+ 	  sb_notify() syscalls and the KEYCTL_WATCH_KEY keyctl() function.
+ 
++config RANDMOD_SAMPLE_KO
++	def_bool n
++
+ endif # SAMPLES
+diff --git a/samples/Makefile b/samples/Makefile
+index 087e0988ccc5..9fa5adfc3f2a 100644
+--- a/samples/Makefile
++++ b/samples/Makefile
+@@ -15,6 +15,7 @@ subdir-$(CONFIG_SAMPLE_LANDLOCK)	+= landlock
+ obj-$(CONFIG_SAMPLE_LIVEPATCH)		+= livepatch/
+ subdir-$(CONFIG_SAMPLE_PIDFD)		+= pidfd
+ obj-$(CONFIG_SAMPLE_QMI_CLIENT)		+= qmi/
++obj-$(CONFIG_SAMPLE_RERANDOMIZABLE_LKM) += rerandomizable_lkm/
+ obj-$(CONFIG_SAMPLE_RPMSG_CLIENT)	+= rpmsg/
+ subdir-$(CONFIG_SAMPLE_SECCOMP)		+= seccomp
+ subdir-$(CONFIG_SAMPLE_TIMER)		+= timers
+@@ -30,3 +31,4 @@ obj-$(CONFIG_SAMPLE_INTEL_MEI)		+= mei/
+ subdir-$(CONFIG_SAMPLE_WATCHDOG)	+= watchdog
+ subdir-$(CONFIG_SAMPLE_WATCH_QUEUE)	+= watch_queue
+ obj-$(CONFIG_DEBUG_KMEMLEAK_TEST)	+= kmemleak/
++obj-$(CONFIG_RANDMOD_SAMPLE_KO)		+= randmod/
+diff --git a/samples/randmod/Makefile b/samples/randmod/Makefile
+new file mode 100644
+index 000000000000..9f2f315f1d91
+--- /dev/null
++++ b/samples/randmod/Makefile
+@@ -0,0 +1 @@
++obj-m += randmod_test.o
+\ No newline at end of file
+diff --git a/samples/randmod/randmod_test.c b/samples/randmod/randmod_test.c
+new file mode 100644
+index 000000000000..384e70395f31
+--- /dev/null
++++ b/samples/randmod/randmod_test.c
+@@ -0,0 +1,150 @@
++#include <linux/module.h>	/* Needed by all modules */
++#include <linux/kernel.h>	/* Needed for KERN_INFO */
++#include <linux/ktime.h>
++#include <linux/delay.h>
++
++
++#define __FILENAME__ (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__)
++#define printp(x) printk("(%s.%03d): " #x " = 0x%lx\n", __FILENAME__, __LINE__, (unsigned long)(x))
++#define INC_BY_DELTA(x, delta) ( x = (typeof((x))) ((unsigned long)(x) + (unsigned long)(delta)) )
++#define _ASM_BL(f)		"bl " #f
++
++#define SPECIAL_FUNCTION_PROTO(ret, name, args...)  \
++	noinline ret __attribute__ ((section (".trampoline.text." #name))) __attribute__((naked)) name(args)
++#define SPECIAL_FUNCTION(ret, name, args...) \
++_Pragma("GCC diagnostic push") \
++_Pragma("GCC diagnostic ignored \"-Wreturn-type\"") \
++_Pragma("GCC diagnostic ignored \"-Wattributes\"") \
++ret __attribute__ ((visibility("hidden"))) name## _ ##real(args);\
++SPECIAL_FUNCTION_PROTO(ret, name, args) {              \
++    _Pragma("GCC diagnostic push")                     \
++    _Pragma("GCC diagnostic ignored \"-Wreturn-type\"")\
++    _Pragma("GCC diagnostic ignored \"-Wattributes\"") \
++	asm ("sub sp, sp, #96");                           \
++	asm ("stp x29, x30, [sp, #80]");                   \
++	asm ("stp x0, x1, [sp, #64]");                     \
++	asm ("stp x2, x3, [sp, #48]");                     \
++	asm ("stp x4, x5, [sp, #32]");                     \
++	asm ("stp x6, x7, [sp, #16]");                     \
++	asm ("str x19, [sp]");                             \
++	asm ("mov x29, sp");                               \
++	asm ("adrp x19, __this_module");                   \
++	asm ("add x19, x19, :lo12:__this_module");         \
++	asm ("mov x0, x19");                               \
++	asm ("bl add_rand_curr");                          \
++	asm ("ldp x0, x1, [sp, #64]");                     \
++	asm ("ldp x2, x3, [sp, #48]");                     \
++	asm ("ldp x4, x5, [sp, #32]");                     \
++	asm ("ldp x6, x7, [sp, #16]");                     \
++	asm (_ASM_BL(name## _ ##real));                    \
++	asm ("stp x0, x1, [sp, #64]");                     \
++	asm ("stp x2, x3, [sp, #48]");                     \
++	asm ("stp x4, x5, [sp, #32]");                     \
++	asm ("stp x6, x7, [sp, #16]");                     \
++	asm ("mov x0, x19");                               \
++	asm ("bl del_rand_curr");                          \
++	asm ("ldp x29, x30, [sp, #80]");                   \
++	asm ("ldp x0, x1, [sp, #64]");                     \
++	asm ("ldp x2, x3, [sp, #48]");                     \
++	asm ("ldp x4, x5, [sp, #32]");                     \
++	asm ("ldp x6, x7, [sp, #16]");                     \
++	asm ("ldr x19, [sp]");                             \
++	asm ("add sp, sp, #96");                           \
++	asm ("ret");                                       \
++} \
++_Pragma("GCC diagnostic pop") \
++ret name## _ ##real(args)
++
++// Global variants
++int* global_data_pointer;
++int global_data = 1234; // In .data section
++
++// Function pointer
++void (*global_function_pointer)(void);
++
++SPECIAL_FUNCTION(void, local_random_data_pointer_callee, int *local_pointer) {
++// void local_random_data_pointer_callee(int *local_pointer) {
++    printk(KERN_INFO "%s %d local_pinter value: %lx local_pointer_addr: %lx value: %d\n", 
++        __FUNCTION__, __LINE__, local_pointer, &local_pointer, *local_pointer);
++}
++
++SPECIAL_FUNCTION(void, local_random_data_pointer, void) {
++// void local_random_data_pointer(void) {
++    int local_data = 10;
++    local_random_data_pointer_callee(&local_data); // Passing parameters in stack
++}
++
++SPECIAL_FUNCTION(void, global_random_data_pointer, void) {
++// void global_random_data_pointer(void) {
++    global_data_pointer = &global_data;
++}
++
++SPECIAL_FUNCTION(void, random_function, void) {
++// void random_function(void) {
++    printk(KERN_INFO "%s %d random function addr:%lx\n", __FUNCTION__, __LINE__, &random_function);
++}
++
++SPECIAL_FUNCTION(void, local_random_function_pointer_callee, void (*func)(void)) {
++// void local_random_function_pointer_callee(void (*func)(void)) {
++    func();
++}
++
++SPECIAL_FUNCTION(void, local_random_function_pointer, void) {
++// void local_random_function_pointer(void) {
++    void (*local_function_pointer)(void) = &random_function;
++    local_random_function_pointer_callee(local_function_pointer);
++}
++
++SPECIAL_FUNCTION(void, global_random_function_pointer, void) {
++// void global_random_function_pointer(void) {
++    global_function_pointer = &random_function;
++}
++
++SPECIAL_FUNCTION(void, init_entry, void) {
++// void init_entry(void) {
++    printk(KERN_INFO "**************** init_entry ****************");
++    local_random_data_pointer();
++    global_random_data_pointer();
++
++    local_random_function_pointer();
++    global_random_function_pointer();
++    printk(KERN_INFO "**************** init_entry end ****************");
++}
++
++SPECIAL_FUNCTION(int, check_entry, int a, char *c, time64_t time) {
++// int check_entry(int a, char *c, time64_t time) {
++    // Check global variants
++    printk("**************** check_entry ******************");
++    mdelay(10000);
++    printk("%s %d global data pointer addr %lx global_data addr %lx\n", 
++        __FUNCTION__, __LINE__,  &global_data_pointer, &global_data);
++    printk("%s %d global data pointer value: %lx\n", 
++        __FUNCTION__, __LINE__, global_data_pointer);
++    printk("%s %d global data pointer point value %d\n", 
++        __FUNCTION__, __LINE__,*global_data_pointer);
++    printk("time is %lld \n", time);
++    // Check function pointer
++    global_function_pointer();
++    printk("**************** check_entry end ******************");
++    return a;
++}
++
++static int __init random_test_driver_init(void) {
++    init_entry();
++    check_entry(11, "chifan", ktime_get_seconds());
++
++    return 0;
++}
++
++static void __exit random_test_driver_exit(void) {
++    return;
++}
++
++module_init(random_test_driver_init);
++module_exit(random_test_driver_exit);
++
++MODULE_LICENSE("GPL");
++MODULE_INFO(shuffle, "1");
++MODULE_AUTHOR("Runkuan Li");
++MODULE_DESCRIPTION("Rerandomizable LKM");
++MODULE_VERSION("1.0");
+\ No newline at end of file
+diff --git a/samples/rerandomizable_lkm/Makefile b/samples/rerandomizable_lkm/Makefile
+new file mode 100644
+index 000000000000..fc6b9e45f128
+--- /dev/null
++++ b/samples/rerandomizable_lkm/Makefile
+@@ -0,0 +1,12 @@
++# SPDX-License-Identifier: GPL-2.0
++#
++# Makefile for rerandomizable loadable kernel module
++#
++
++
++test-y := test_gcc_plugin1.o test_gcc_plugin2.o
++obj-$(CONFIG_SAMPLE_RERANDOMIZABLE_LKM) += test_kthread.o test.o 
++$(foreach o, $(test-y), $(eval CFLAGS_$(o) += $(ENABLE_TRAMPOLINE_PLUGIN)))
++
++CFLAGS_test_driver.o += $(ENABLE_TRAMPOLINE_PLUGIN)
++obj-$(CONFIG_SAMPLE_RERANDOMIZABLE_LKM) += test_driver.o
+diff --git a/samples/rerandomizable_lkm/rerandom_driver.h b/samples/rerandomizable_lkm/rerandom_driver.h
+new file mode 100644
+index 000000000000..b3fdf319ad3e
+--- /dev/null
++++ b/samples/rerandomizable_lkm/rerandom_driver.h
+@@ -0,0 +1,13 @@
++struct Rerandom_Driver {
++	const char		   *name;
++	void (*init_entry)(void);
++	int (*check_entry)(int, char*, time64_t);
++};
++
++void local_random_data_pointer_callee(int *local_pointer);
++void local_random_data_pointer(void);
++void global_random_data_pointer(void);
++void random_function(void);
++void local_random_function_pointer_callee(void (*func)(void));
++void local_random_function_pointer(void);
++void global_random_function_pointer(void);
+diff --git a/samples/rerandomizable_lkm/test_driver.c b/samples/rerandomizable_lkm/test_driver.c
+new file mode 100644
+index 000000000000..bade8d87e4dc
+--- /dev/null
++++ b/samples/rerandomizable_lkm/test_driver.c
+@@ -0,0 +1,99 @@
++#include <linux/module.h>
++#include <linux/kernel.h>
++#include <linux/ktime.h>
++#include <linux/delay.h>
++
++int *global_data_pointer;
++int global_data = 1234;
++void (*global_function_pointer)(void);
++
++void local_random_data_pointer_callee(int *local_pointer)
++{
++	pr_info("%s %d local_pinter value: %lx local_pointer_addr: %lx value: %d\n",
++	       __FUNCTION__, __LINE__, (long unsigned int)local_pointer,
++	       (long unsigned int)&local_pointer, (int)*local_pointer);
++}
++
++void local_random_data_pointer(void)
++{
++	int local_data = 10;
++	local_random_data_pointer_callee(
++		&local_data); // Passing parameters in stack
++}
++
++void global_random_data_pointer(void)
++{
++	global_data_pointer = &global_data;
++}
++
++void random_function(void)
++{
++	pr_info("%s %d random function addr:%lx\n", __FUNCTION__, __LINE__,
++	       (long unsigned int)&random_function);
++}
++
++void local_random_function_pointer_callee(void (*func)(void))
++{
++	func();
++}
++
++void local_random_function_pointer(void)
++{
++	void (*local_function_pointer)(void) = &random_function;
++	local_random_function_pointer_callee(local_function_pointer);
++}
++
++void global_random_function_pointer(void)
++{
++	global_function_pointer = &random_function;
++}
++
++void init_entry(void)
++{
++	pr_info("**************** init_entry ****************\n");
++	local_random_data_pointer();
++	global_random_data_pointer();
++
++	local_random_function_pointer();
++	global_random_function_pointer();
++	pr_info("**************** init_entry end ****************\n");
++}
++
++int check_entry(int a, char *c, time64_t time)
++{
++	// Check global variants
++	pr_info("**************** check_entry ******************\n");
++	pr_info("%s %d global data pointer addr %lx global_data addr %lx\n",
++	       __FUNCTION__, __LINE__, (long unsigned int)&global_data_pointer,
++	       (long unsigned int)&global_data);
++	pr_info("%s %d global data pointer value: %lx\n", __FUNCTION__, __LINE__,
++	       (long unsigned int)global_data_pointer);
++	pr_info("%s %d global data pointer point value %d\n", __FUNCTION__,
++	       __LINE__, (int)*global_data_pointer);
++	pr_info("time is %lld \n", time);
++	// Check function pointer
++	global_function_pointer();
++	pr_info("**************** check_entry end ******************\n");
++	return a;
++}
++
++static int __init random_test_driver_init(void)
++{
++	init_entry();
++	check_entry(11, "chifan", ktime_get_seconds());
++	return 0;
++}
++
++static void __exit random_test_driver_exit(void)
++{
++	return;
++}
++
++module_init(random_test_driver_init);
++module_exit(random_test_driver_exit);
++
++MODULE_LICENSE("GPL");
++MODULE_INFO(shuffle, "1");
++MODULE_AUTHOR("Runkuan Li");
++MODULE_DESCRIPTION("Rerandomizable LKM");
++MODULE_VERSION("1.0");
+diff --git a/samples/rerandomizable_lkm/test_gcc_plugin1.c b/samples/rerandomizable_lkm/test_gcc_plugin1.c
+new file mode 100644
+index 000000000000..595b4536a66e
+--- /dev/null
++++ b/samples/rerandomizable_lkm/test_gcc_plugin1.c
+@@ -0,0 +1,71 @@
++#include <linux/module.h>
++#include <linux/kernel.h>
++#include <linux/ktime.h>
++#include <linux/delay.h>
++
++#include <rerandom_driver.h>
++
++int *global_data_pointer;
++int global_data = 1234;
++void (*global_function_pointer)(void);
++
++void init_entry(void)
++{
++	pr_info("**************** init_entry ****************\n");
++	local_random_data_pointer();
++	global_random_data_pointer();
++
++	local_random_function_pointer();
++	global_random_function_pointer();
++	pr_info("**************** init_entry end ****************\n");
++}
++
++int check_entry(int a, char *c, time64_t time)
++{
++	// Check global variants
++	mdelay(10000);
++	pr_info("**************** check_entry ******************\n");
++	pr_info("%s %d global data pointer addr %lx global_data addr %lx\n",
++	       __FUNCTION__, __LINE__, (long unsigned int)&global_data_pointer,
++	       (long unsigned int)&global_data);
++	pr_info("%s %d global data pointer value: %lx\n", __FUNCTION__, __LINE__,
++	       (long unsigned int)global_data_pointer);
++	pr_info("%s %d global data pointer point value %d\n", __FUNCTION__,
++	       __LINE__, (int)*global_data_pointer);
++	pr_info("time is %lld \n", time);
++	// Check function pointer
++	global_function_pointer();
++	pr_info("**************** check_entry end ******************\n");
++	return a;
++}
++
++struct Rerandom_Driver rerandom_driver_struct = {};
++
++extern void register_rerandom_driver(struct Rerandom_Driver *driver);
++extern void register_rerandom_driver_param(void (*init_entry)(void),
++					   int (*check_entry)(int, char *,
++							      time64_t));
++
++static int __init random_test_driver_init(void)
++{
++	rerandom_driver_struct.name = "rerandom_test";
++	rerandom_driver_struct.init_entry = &init_entry;
++	rerandom_driver_struct.check_entry = &check_entry;
++	// register_rerandom_driver(&rerandom_driver_struct);
++	register_rerandom_driver_param(init_entry, check_entry);
++
++	return 0;
++}
++
++static void __exit random_test_driver_exit(void)
++{
++	return;
++}
++
++module_init(random_test_driver_init);
++module_exit(random_test_driver_exit);
++
++MODULE_LICENSE("GPL");
++MODULE_AUTHOR("Runkuan Li");
++MODULE_DESCRIPTION("Rerandomizable LKM");
++MODULE_VERSION("1.0");
+diff --git a/samples/rerandomizable_lkm/test_gcc_plugin2.c b/samples/rerandomizable_lkm/test_gcc_plugin2.c
+new file mode 100644
+index 000000000000..dde025221977
+--- /dev/null
++++ b/samples/rerandomizable_lkm/test_gcc_plugin2.c
+@@ -0,0 +1,51 @@
++#include <linux/module.h>
++#include <linux/kernel.h>
++#include <linux/ktime.h>
++#include <linux/delay.h>
++
++#include <rerandom_driver.h>
++
++extern int *global_data_pointer;
++extern int global_data;
++extern void (*global_function_pointer)(void);
++
++void local_random_data_pointer_callee(int *local_pointer)
++{
++	pr_info("%s %d local_pinter value: %lx local_pointer_addr: %lx value: %d\n",
++		__FUNCTION__, __LINE__, (long unsigned int)local_pointer,
++		(long unsigned int)&local_pointer, (int)*local_pointer);
++}
++
++void local_random_data_pointer(void)
++{
++	int local_data = 10;
++	local_random_data_pointer_callee(
++		&local_data); // Passing parameters in stack
++}
++
++void global_random_data_pointer(void)
++{
++	global_data_pointer = &global_data;
++}
++
++void random_function(void)
++{
++	pr_info("%s %d random function addr:%lx\n", __FUNCTION__,
++	       __LINE__, (long unsigned int)&random_function);
++}
++
++void local_random_function_pointer_callee(void (*func)(void))
++{
++	func();
++}
++
++void local_random_function_pointer(void)
++{
++	void (*local_function_pointer)(void) = &random_function;
++	local_random_function_pointer_callee(local_function_pointer);
++}
++
++void global_random_function_pointer(void)
++{
++	global_function_pointer = &random_function;
++}
+diff --git a/samples/rerandomizable_lkm/test_kthread.c b/samples/rerandomizable_lkm/test_kthread.c
+new file mode 100644
+index 000000000000..a148a9384b00
+--- /dev/null
++++ b/samples/rerandomizable_lkm/test_kthread.c
+@@ -0,0 +1,99 @@
++#include <linux/module.h>
++#include <linux/kernel.h>
++#include <linux/ktime.h>
++#include <linux/kthread.h>
++#include <linux/delay.h>
++
++#include <rerandom_driver.h>
++
++static struct task_struct *trampoline_test_kthread = NULL;
++
++char default_name[] = "default_name";
++
++void empty_func(void)
++{
++	return;
++}
++
++int empty_check_func(int a, char *c, time64_t time)
++{
++	pr_info("This is an empty func.\n");
++	return 0;
++}
++
++struct Rerandom_Driver rerandom_driver = {
++	.name = default_name,
++	.init_entry = empty_func,
++	.check_entry = empty_check_func,
++};
++
++void register_rerandom_driver(
++	const struct Rerandom_Driver *rerandom_driver_struct)
++{
++	rerandom_driver.name = rerandom_driver_struct->name;
++	rerandom_driver.init_entry = rerandom_driver_struct->init_entry;
++	rerandom_driver.check_entry = rerandom_driver_struct->check_entry;
++}
++EXPORT_SYMBOL_GPL(register_rerandom_driver);
++
++void register_rerandom_driver_param(void (*init_entry)(void),
++				    int (*check_entry)(int, char *, time64_t))
++{
++	rerandom_driver.init_entry = init_entry;
++	rerandom_driver.check_entry = check_entry;
++}
++EXPORT_SYMBOL_GPL(register_rerandom_driver_param);
++
++static int trampoline_test_kthread_run(void *p)
++{
++	time64_t time = ktime_get_seconds();
++	int test_ret = -1;
++	pr_info("Trampoline test kthread: kthread started.\n");
++	for (;;) {
++		msleep(1000);
++		/* Periodically print the statistics */
++		if (time < ktime_get_seconds()) {
++			time = ktime_get_seconds() + 5;
++			pr_info("************************\n");
++			pr_info("**Jump into test func.**\n");
++			pr_info("************************\n");
++			rerandom_driver.init_entry();
++			test_ret =
++				rerandom_driver.check_entry(11, "chifan", time);
++			pr_info("test_ret = %d\n", test_ret);
++			pr_info("Out Function init_entry Address: %px\n",
++			       rerandom_driver.init_entry);
++			pr_info("Out Function check_entry Address: %px\n",
++			       rerandom_driver.check_entry);
++		}
++	}
++	return 0;
++}
++
++static int __init kthread_init(void)
++{
++	trampoline_test_kthread = kthread_run(trampoline_test_kthread_run, NULL,
++					      "trampoline_test_kthread");
++	if (!trampoline_test_kthread) {
++		pr_info("kthread_run fail\n");
++		return -ECHILD;
++	}
++	return 0;
++}
++
++static void __exit kthread_exit(void)
++{
++	if (trampoline_test_kthread) {
++		pr_info("kthread_stop\n");
++		kthread_stop(trampoline_test_kthread);
++		trampoline_test_kthread = NULL;
++	}
++}
++
++module_init(kthread_init);
++module_exit(kthread_exit);
++
++MODULE_LICENSE("GPL");
++MODULE_AUTHOR("Runkuan Li");
++MODULE_DESCRIPTION("Kernel thread helps to test trampoline.");
++MODULE_VERSION("1.0");
+diff --git a/scripts/Makefile.gcc-plugins b/scripts/Makefile.gcc-plugins
+index 36814be80264..3e095c8f9b69 100644
+--- a/scripts/Makefile.gcc-plugins
++++ b/scripts/Makefile.gcc-plugins
+@@ -2,6 +2,13 @@
+ 
+ gcc-plugin-$(CONFIG_GCC_PLUGIN_CYC_COMPLEXITY)	+= cyc_complexity_plugin.so
+ 
++gcc-plugin-$(CONFIG_GCC_PLUGIN_TRAMPOLINE)	+= trampoline_plugin.so
++ifdef CONFIG_GCC_PLUGIN_TRAMPOLINE
++	ENABLE_TRAMPOLINE_PLUGIN := $(strip $(addprefix -fplugin=$(objtree)/scripts/gcc-plugins/, trampoline_plugin.so))
++	ENABLE_TRAMPOLINE_PLUGIN += -fdisable-ipa-inline -fdisable-tree-fnsplit -fdisable-ipa-sra -fdisable-ipa-cp 
++endif
++export ENABLE_TRAMPOLINE_PLUGIN
++
+ gcc-plugin-$(CONFIG_GCC_PLUGIN_LATENT_ENTROPY)	+= latent_entropy_plugin.so
+ gcc-plugin-cflags-$(CONFIG_GCC_PLUGIN_LATENT_ENTROPY)		\
+ 		+= -DLATENT_ENTROPY_PLUGIN
+@@ -54,7 +61,9 @@ export DISABLE_ARM_SSP_PER_TASK_PLUGIN
+ # filter them out of the KBUILD_CFLAGS.
+ GCC_PLUGINS_CFLAGS := $(strip $(addprefix -fplugin=$(objtree)/scripts/gcc-plugins/, $(gcc-plugin-y)) $(gcc-plugin-cflags-y))
+ # The sancov_plugin.so is included via CFLAGS_KCOV, so it is removed here.
+-GCC_PLUGINS_CFLAGS := $(filter-out %/sancov_plugin.so, $(GCC_PLUGINS_CFLAGS))
++# The same to trampoline_plugin.so.
++to-be-filtered-out = %/sancov_plugin.so %/trampoline_plugin.so
++GCC_PLUGINS_CFLAGS := $(filter-out $(to-be-filtered-out), $(GCC_PLUGINS_CFLAGS))
+ export GCC_PLUGINS_CFLAGS
+ 
+ # Add the flags to the build!
+diff --git a/scripts/Makefile.modfinal b/scripts/Makefile.modfinal
+index 8144715ef654..e6a82c3567db 100644
+--- a/scripts/Makefile.modfinal
++++ b/scripts/Makefile.modfinal
+@@ -38,7 +38,15 @@ quiet_cmd_gen_modules_lds = GEN [M] $@
+ 
+ %.ko.lds: %$(mod-prelink-ext).o scripts/module_fg.lds FORCE
+ 	$(call if_changed,gen_modules_lds)
+-endif
++
++ifdef CONFIG_MODULE_FG_KASLR_GDB_TEXT
++quiet_cmd_ko_workaround = OBJCOPY [M] $@
++      cmd_ko_workaround =                                               \
++	$(OBJCOPY) --set-section-flags .text=alloc,readonly,code	\
++	  $(filter %.tmp.ko, $<) $@
++
++endif # CONFIG_MODULE_FG_KASLR_GDB_TEXT
++endif # CONFIG_MODULE_FG_KASLR
+ 
+ ARCH_POSTLINK := $(wildcard $(srctree)/arch/$(SRCARCH)/Makefile.postlink)
+ 
+@@ -53,15 +61,26 @@ ifdef CONFIG_MODULE_FG_KASLR
+ module_fglink := $(foreach S,$(modules),$(if $(findstring $(notdir $(S)),$(CONFIG_MODULE_FG_KASLR_ENABLE)),$(S),))
+ module_normallink := $(foreach S,$(modules),$(if $(filter $(S),$(module_fglink)),,$(S)))
+ 
++ifdef CONFIG_MODULE_FG_KASLR_GDB_TEXT
++%.tmp.ko: %.o %.mod.o %.ko.lds FORCE
++	+$(call if_changed,ld_ko_o)
++
++$(module_fglink): %.ko: %.tmp.ko FORCE
++	+$(call if_changed,ko_workaround)
++
++else
+ $(module_fglink): %.ko: %.o %.mod.o %.ko.lds FORCE
+ 	+$(call if_changed,ld_ko_o)
++
++endif # CONFIG_MODULE_FG_KASLR_GDB_TEXT
+ else
+ module_normallink := $(modules)
+-endif
++endif # CONFIG_MODULE_FG_KASLR
++
+ $(module_normallink): %.ko: %.o %.mod.o scripts/module.lds FORCE
+ 	+$(call if_changed,ld_ko_o)
+ 
+-targets += $(modules) $(modules:.ko=.mod.o) $(modules:.ko=.ko.lds)
++targets += $(modules) $(modules:.ko=.mod.o) $(modules:.ko=.ko.lds) $(modules:.ko=.tmp.ko)
+ 
+ # Add FORCE to the prequisites of a target to force it to be always rebuilt.
+ # ---------------------------------------------------------------------------
+diff --git a/scripts/gcc-plugins/Kconfig b/scripts/gcc-plugins/Kconfig
+index ab9eb4cbe33a..7208eeff39a5 100644
+--- a/scripts/gcc-plugins/Kconfig
++++ b/scripts/gcc-plugins/Kconfig
+@@ -19,6 +19,13 @@ menuconfig GCC_PLUGINS
+ 
+ if GCC_PLUGINS
+ 
++config GCC_PLUGIN_TRAMPOLINE
++	bool "Generate trampoline for each function"
++	depends on ARM64_RANDOM_MODULE
++	help
++	  This plugin generates trampoline for each function, each trampoline 
++	  has its own section.
++
+ config GCC_PLUGIN_CYC_COMPLEXITY
+ 	bool "Compute the cyclomatic complexity of a function" if EXPERT
+ 	depends on !COMPILE_TEST	# too noisy
+diff --git a/scripts/gcc-plugins/gcc-common.h b/scripts/gcc-plugins/gcc-common.h
+index 9ad76b7f3f10..947d6d55eeb5 100644
+--- a/scripts/gcc-plugins/gcc-common.h
++++ b/scripts/gcc-plugins/gcc-common.h
+@@ -16,6 +16,7 @@
+ #include "line-map.h"
+ #include "input.h"
+ #include "tree.h"
++#include "c-tree.h"
+ 
+ #include "tree-inline.h"
+ #include "version.h"
+@@ -164,9 +165,6 @@ void dump_gimple_stmt(pretty_printer *, gimple, int, int);
+ #define TYPE_NAME_POINTER(node) IDENTIFIER_POINTER(TYPE_NAME(node))
+ #define TYPE_NAME_LENGTH(node) IDENTIFIER_LENGTH(TYPE_NAME(node))
+ 
+-/* should come from c-tree.h if only it were installed for gcc 4.5... */
+-#define C_TYPE_FIELDS_READONLY(TYPE) TREE_LANG_FLAG_1(TYPE)
+-
+ static inline tree build_const_char_string(int len, const char *str)
+ {
+ 	tree cstr, elem, index, type;
+diff --git a/scripts/gcc-plugins/rerandom.h b/scripts/gcc-plugins/rerandom.h
+new file mode 100644
+index 000000000000..41f11f43e2d2
+--- /dev/null
++++ b/scripts/gcc-plugins/rerandom.h
+@@ -0,0 +1,55 @@
++#ifndef __GCC_PLUGIN_MULTIVERSE_H
++#define __GCC_PLUGIN_MULTIVERSE_H
++
++#include <stdint.h>
++#include <string>
++#include <vector>
++#include <list>
++#include <set>
++
++#include "gcc-common.h"
++
++/*
++ * the predefined section name for trampoline
++ */
++#define FIXED_TRAMPOLINE_SECTION_PREFIX ".trampoline.text."
++
++/*
++ * those wrappered function added with suffix
++ */
++#define REAL_FN_NAME_SUFFIX      "real"
++
++/*
++ * for this style: MODULE_INFO(shuffle, "1");
++ * this decl will be updated into .modinfo
++ */
++#define MODULE_INFO_SECTION_NAME  ".modinfo"
++
++/*
++ * the log file path
++ */
++#define DEBUG_DIR                "./"
++#define debug_filename(a) DEBUG_DIR a
++
++#define PRINT_DEBUG 0
++
++#define OUTPUT(filename, str, args...) \
++        if (PRINT_DEBUG) { \
++                FILE *out_file = fopen(debug_filename(filename), "a"); \
++                fprintf(out_file, str, args); \
++                fclose(out_file); \
++        } \
++
++#define DEBUG_OUTPUT(str, args...)      OUTPUT("debug.txt", str, args)
++
++#define ASM_FORMAT_USE_UNDERSCORE(OUTPUT, NAME) \
++        do { const char *const name_ = (NAME); \
++                char *const output_ = (OUTPUT) = \
++                (char *) alloca (strlen (name_) + 32); \
++                sprintf (output_, "%s", name_); \
++        } while (0)
++
++void gen_trampoline(void *gcc_data, void *user_data);
++void update_modinfo(void *gcc_data, void *user_data);
++
++#endif
+diff --git a/scripts/gcc-plugins/trampoline_plugin.c b/scripts/gcc-plugins/trampoline_plugin.c
+new file mode 100644
+index 000000000000..e83d23be5486
+--- /dev/null
++++ b/scripts/gcc-plugins/trampoline_plugin.c
+@@ -0,0 +1,360 @@
++#include <stdio.h>
++#include <stdlib.h>
++#include "gcc-common.h"
++#include "tree.h"
++#include "c-tree.h"
++#include "cgraph.h"
++
++#define FIXED_TRAMPOLINE_SECTION_PREFIX ".trampoline."
++#define MODULE_INFO_SECTION_NAME ".modinfo"
++
++static bool place_modinfo = false;
++char generated_str_name[] = "gen_str_cst_";
++static int generated_str_counter = 0;
++
++#define DEBUG_DIR "./"
++#define debug_filename(a) DEBUG_DIR a
++
++#define concat(a, b) a b
++
++#define REAL_FN_NAME_SUFFIX "real"
++
++#define OUTPUT_INSN(str, file)                                   \
++	fputs("\t", file);                                           \
++	fputs(str, file);                                            \
++	fputs(";\n", file)
++#define OVERWRITE_INSN(insn_len) fseek(file, -insn_len, SEEK_CUR);
++
++#define PRINT_DEBUG 0
++
++#define OUTPUT(filename, str, args...)                           \
++	if (PRINT_DEBUG) {                                           \
++		FILE *out_file = fopen(debug_filename(filename), "a");   \
++		fprintf(out_file, str, args);                            \
++		fclose(out_file);                                        \
++	}
++
++#define DEBUG_OUTPUT(str, args...) OUTPUT("all-debug.txt", str, args)
++
++/* 
++ * All plugins must export this symbol so that they can be linked with
++ * GCC license-wise.
++*/
++int plugin_is_GPL_compatible;
++
++static struct plugin_info rerandomization_wrapper_plugin_info = {
++	.version = "1",
++	.help = "Wrap functions and variables so module can be rerandomized\n",
++};
++
++/*
++ * if fndecl is a init function, or a exit function, then return 1
++ * else return 0.
++ */
++int isInitOrExit(tree fndecl)
++{
++	const char *secname = decl_section_name(fndecl);
++	if (secname == NULL) {
++		return 0;
++	}
++
++	if ((strcmp(secname, ".init.text") == 0) ||
++	    (strcmp(secname, ".exit.text") == 0)) {
++		return 1;
++	} else {
++		return 0;
++	}
++}
++
++bool starts_with(const char *pre, const char *str)
++{
++	size_t lenpre = strlen(pre), lenstr = strlen(str);
++	return lenstr < lenpre ? false : memcmp(pre, str, lenpre) == 0;
++}
++
++/* Determine whether the definition of node is contained within module. */
++static bool is_node_decl_in_module(tree node)
++{
++	const char *current_function_name = DECL_NAME_POINTER(node);
++	DEBUG_OUTPUT("is_node_decl_in_module: %s\n", current_function_name);
++	if (DECL_BUILT_IN_CLASS(node) != NOT_BUILT_IN) {
++		DEBUG_OUTPUT("DECL_BUILT_IN_CLASS(node) != %s\n",
++			     "NOT_BUILT_IN");
++		return false;
++	} else if (node && DECL_SOURCE_LOCATION(node)) {
++		expanded_location xloc =
++			expand_location(DECL_SOURCE_LOCATION(node));
++		DEBUG_OUTPUT("location: %s\n", xloc.file);
++		return !(starts_with("./", xloc.file));
++	}
++	return false;
++}
++
++#define ASM_FORMAT_USE_UNDERSCORE(OUTPUT, NAME)                  \
++	do {                                                         \
++		const char *const name_ = (NAME);                        \
++		char *const output_ = (OUTPUT) =                         \
++			(char *)alloca(strlen(name_) + 32);                  \
++		sprintf(output_, "%s", name_);                           \
++	} while (0)
++
++tree get_real_function_tree(tree decl)
++{
++	const char *name = IDENTIFIER_POINTER(DECL_ASSEMBLER_NAME(decl));
++	size_t len = strlen(name);
++	char *tmp_name, *prefix;
++	prefix = XALLOCAVEC(char, len + strlen(REAL_FN_NAME_SUFFIX) + 2);
++	memcpy(prefix, name, len);
++	strcpy(prefix + len + 1, REAL_FN_NAME_SUFFIX);
++	prefix[len] = '_';
++	ASM_FORMAT_USE_UNDERSCORE(tmp_name, prefix);
++	const char *real_name = tmp_name;
++	return get_identifier(real_name);
++}
++
++tree build_wrapper_function(tree fndecl)
++{
++	if (DECL_DECLARED_INLINE_P(fndecl)) {
++		DEBUG_OUTPUT("INLINE function: %s\n", get_name(fndecl));
++		return NULL_TREE;
++	}
++	// Do not process exit, init, inline function
++	if (isInitOrExit(fndecl) > 0) {
++		//this target file is the right place to set the modinfo
++		place_modinfo = true;
++		DEBUG_OUTPUT("isInitOrExit: %s\n", get_name(fndecl));
++		return NULL_TREE;
++	}
++	DEBUG_OUTPUT("Building wrapper for function: %s\n", get_name(fndecl));
++	DEBUG_OUTPUT("%s\n", get_name(fndecl));
++	struct cgraph_node *node = cgraph_node::get(fndecl);
++
++	vec<ipa_replace_map *, va_gc> *replace_trees = NULL;
++	cgraph_node *clone2 = node->create_virtual_clone(
++		node->collect_callers(), replace_trees, NULL,
++		REAL_FN_NAME_SUFFIX, 0); //vec<cgraph_edge * >()
++
++	DECL_ARTIFICIAL(clone2->decl) = 1;
++	DECL_PRESERVE_P(clone2->decl) = 1;
++	TREE_USED(clone2->decl) = 1;
++	DECL_UNINLINABLE(clone2->decl) = 1;
++	TREE_STATIC(fndecl) = 0;
++	TREE_STATIC(clone2->decl) = 0;
++
++	gimple_set_body(clone2->decl, NULL);
++	gimple_set_body(fndecl, NULL);
++
++	// Make sure cloned function gets added and output
++	node->force_output = true;
++	clone2->force_output = true;
++
++	cgraph_node *next_clone;
++	for (cgraph_node *n = node->clones; n; n = next_clone) {
++		next_clone = n->next_sibling_clone;
++		if (n->decl != node->decl)
++			n->materialize_clone();
++	}
++
++	DECL_VISIBILITY(fndecl) = VISIBILITY_DEFAULT;
++	const char *fname = get_name(fndecl);
++	int len = strlen(FIXED_TRAMPOLINE_SECTION_PREFIX) + strlen(fname);
++	char secname[len + 1] = { 0 };
++	snprintf(secname, len + 1, "%s%s", FIXED_TRAMPOLINE_SECTION_PREFIX,
++		 fname);
++	set_decl_section_name(fndecl, secname);
++
++	const char *rname = get_name(clone2->decl);
++	len = strlen(".text.") + strlen(rname);
++	char rsecname[len + 1] = { 0 };
++	snprintf(rsecname, len + 1, "%s%s", ".text.", rname);
++	set_decl_section_name(clone2->decl, rsecname);
++	change_decl_assembler_name(clone2->decl,
++				   get_real_function_tree(fndecl));
++	return clone2->decl;
++}
++
++static void do_execute()
++{
++	const char *current_function_name =
++		DECL_NAME_POINTER(current_function_decl);
++	DEBUG_OUTPUT("Analyzing function: %s\n", current_function_name);
++	tree node_to_replace = build_wrapper_function(current_function_decl);
++}
++
++/* 
++ * Determine whether to run execute function for given function decl. 
++ * Only analyze function decls for current module. 
++ */
++static bool rerandomization_wrapper_instrument_gate(void)
++{
++	return is_node_decl_in_module(current_function_decl);
++}
++
++/* Main function */
++static unsigned int rerandomization_wrapper_instrument_execute(void)
++{
++	do_execute();
++	return 0;
++}
++
++#define PASS_NAME rerandomization_wrapper_instrument
++#include "gcc-generate-gimple-pass.h"
++
++void function_prologue(FILE *file)
++{
++	if (DECL_DECLARED_INLINE_P(current_function_decl)) {
++		DEBUG_OUTPUT("INLINE function: %s\n",
++			     get_name(current_function_decl));
++		return;
++	}
++	if (isInitOrExit(current_function_decl) > 0) {
++		DEBUG_OUTPUT("isInitOrExit: %s\n",
++			     get_name(current_function_decl));
++		return;
++	}
++	if (strstr(DECL_NAME_POINTER(current_function_decl), "real")) {
++		return;
++	}
++
++	OUTPUT_INSN("sub sp, sp, #96", file);
++	OUTPUT_INSN("stp x29, x30, [sp, #80]", file);
++	OUTPUT_INSN("str x30, [x18], #8", file);
++	OUTPUT_INSN("stp x0, x1, [sp, #64]", file);
++	OUTPUT_INSN("stp x2, x3, [sp, #48]", file);
++	OUTPUT_INSN("stp x4, x5, [sp, #32]", file);
++	OUTPUT_INSN("stp x6, x7, [sp, #16]", file);
++	OUTPUT_INSN("str x19, [sp]", file);
++	OUTPUT_INSN("mov x29, sp", file);
++	OUTPUT_INSN("adrp x19, __this_module", file);
++	OUTPUT_INSN("add x19, x19, :lo12:__this_module", file);
++	OUTPUT_INSN("mov x0, x19", file);
++	OUTPUT_INSN("bl add_rand_curr", file);
++	OUTPUT_INSN("ldp x0, x1, [sp, #64]", file);
++	OUTPUT_INSN("ldp x2, x3, [sp, #48]", file);
++	OUTPUT_INSN("ldp x4, x5, [sp, #32]", file);
++	OUTPUT_INSN("ldp x6, x7, [sp, #16]", file);
++
++	const char *str = DECL_NAME_POINTER(current_function_decl);
++	char dest[strlen("bl ") + strlen(str) + strlen("_real")] = "";
++	strcat(dest, "bl ");
++	strcat(dest, str);
++	strcat(dest, "_real");
++	OUTPUT_INSN(dest, file);
++
++	OUTPUT_INSN("stp x0, x1, [sp, #64]", file);
++	OUTPUT_INSN("stp x2, x3, [sp, #48]", file);
++	OUTPUT_INSN("stp x4, x5, [sp, #32]", file);
++	OUTPUT_INSN("stp x6, x7, [sp, #16]", file);
++	OUTPUT_INSN("mov x0, x19", file);
++	OUTPUT_INSN("bl del_rand_curr", file);
++	OUTPUT_INSN("ldp x29, x30, [sp, #80]", file);
++	OUTPUT_INSN("ldr x30, [x18, #-8]!", file);
++	OUTPUT_INSN("ldp x0, x1, [sp, #64]", file);
++	OUTPUT_INSN("ldp x2, x3, [sp, #48]", file);
++	OUTPUT_INSN("ldp x4, x5, [sp, #32]", file);
++	OUTPUT_INSN("ldp x6, x7, [sp, #16]", file);
++	OUTPUT_INSN("ldr x19, [sp]", file);
++	OUTPUT_INSN("add sp, sp, #96", file);
++	OUTPUT_INSN("ret", file);
++	return;
++}
++
++/* Add gcc target hooks for asm generation */
++static void rerandomization_wrapper_plugin_start_unit(void *gcc_data,
++						      void *user_data)
++{
++	targetm.asm_out.function_prologue = function_prologue;
++	struct cgraph_node *node;
++	FOR_EACH_DEFINED_FUNCTION(node)
++	{
++		TREE_PUBLIC(node->decl) = 1;
++	}
++}
++
++static char *build_string_var_name(const char *current_function_name)
++{
++	char gen_str_counter[5];
++	sprintf(gen_str_counter, "%d", generated_str_counter++);
++	int new_str_len =
++		strlen(generated_str_name) + strlen(current_function_name) + 6;
++	char *new_str_name = (char *)xmalloc(sizeof(char) * new_str_len);
++	strcpy(new_str_name, generated_str_name);
++	strcat(new_str_name, current_function_name);
++	strcat(new_str_name, "_");
++	strcat(new_str_name, gen_str_counter);
++	return new_str_name;
++}
++
++static tree build_str_decl(tree id, const char *str)
++{
++	location_t loc = UNKNOWN_LOCATION;
++	tree decl, type, init;
++	size_t length = strlen(str);
++	type = build_array_type(char_type_node,
++				build_index_type(size_int(length)));
++	type = c_build_qualified_type(type, TYPE_QUAL_CONST);
++	decl = build_decl(loc, VAR_DECL, id, type);
++	TREE_STATIC(decl) = 1;
++	TREE_PUBLIC(decl) = 1;
++	DECL_PRESERVE_P(decl) = 1;
++	TREE_READONLY(decl) = 1;
++	TREE_USED(decl) = 1;
++	DECL_EXTERNAL(decl) = 0;
++	init = build_string(length + 1, str);
++	TREE_TYPE(init) = type;
++	DECL_INITIAL(decl) = init;
++	TREE_USED(decl) = 1;
++	if (current_function_decl) {
++		DECL_CONTEXT(decl) = current_function_decl;
++	}
++	finish_decl(decl, loc, init, NULL_TREE, NULL_TREE);
++	return decl;
++}
++
++/* build a str decl: char symtabstr[] = str */
++static tree build_string_var_decl(const char *str, const char *symtabstr)
++{
++	char *var_name = build_string_var_name(symtabstr);
++	tree id = get_identifier(var_name);
++	tree mdecl = build_str_decl(id, str);
++	varpool_add_new_variable(mdecl);
++	set_decl_section_name(mdecl, MODULE_INFO_SECTION_NAME);
++	return mdecl;
++}
++
++/* add modinfo to modinfo section */
++void update_modinfo(void *gcc_data, void *user_data)
++{
++	//add modinfo to modinfo section
++	if (place_modinfo) {
++		DEBUG_OUTPUT("[*]Insert MODULE_INFO '%s' for this module!\n",
++			     "shuffle=1");
++		build_string_var_decl("shuffle=1", "shuffle");
++		//make sure only one pass add this modinfo
++		place_modinfo = false;
++	}
++}
++
++__visible int plugin_init(struct plugin_name_args *plugin_info,
++			  struct plugin_gcc_version *version)
++{
++	const char *const plugin_name = plugin_info->base_name;
++	PASS_INFO(rerandomization_wrapper_instrument, "ssa", 1,
++		  PASS_POS_INSERT_AFTER);
++
++	if (!plugin_default_version_check(version, &gcc_version)) {
++		error(G_("incompatible gcc/plugin versions"));
++		return 1;
++	}
++
++	register_callback(plugin_name, PLUGIN_INFO, NULL,
++			  &rerandomization_wrapper_plugin_info);
++	register_callback(plugin_name, PLUGIN_PASS_MANAGER_SETUP, NULL,
++			  &rerandomization_wrapper_instrument_pass_info);
++	register_callback(plugin_name, PLUGIN_START_UNIT,
++			  rerandomization_wrapper_plugin_start_unit, NULL);
++	register_callback(plugin_name, PLUGIN_ALL_PASSES_END, update_modinfo,
++			  NULL);
++
++	return 0;
++}
+diff --git a/scripts/gcc-plugins/trampoline_plugin_legacy.c b/scripts/gcc-plugins/trampoline_plugin_legacy.c
+new file mode 100644
+index 000000000000..9ceaef8cc41b
+--- /dev/null
++++ b/scripts/gcc-plugins/trampoline_plugin_legacy.c
+@@ -0,0 +1,489 @@
++#include <stdio.h>
++#include <algorithm>
++#include <assert.h>
++#include <bitset>
++#include <list>
++#include <map>
++#include <set>
++#include <sstream>
++#include <string>
++#include <vector>
++
++#include "gcc-common.h"
++#include "rerandom.h"
++
++int plugin_is_GPL_compatible;
++
++struct plugin_info rerandom_plugin_info = {
++	.version = "42",
++	.help = "Continuous FKASLR plugin!\n"
++};
++
++static bool firstTime = true;
++static bool place_modinfo = false;
++char generated_str_name[] = "__UNIQUE_ID_";
++
++tree get_real_function_tree(const char *fname)
++{
++	size_t len = strlen(fname);
++	char *real_name, *tmp;
++	tmp = XALLOCAVEC(char, len + strlen(REAL_FN_NAME_SUFFIX) + 2);
++	memcpy(tmp, fname, len);
++	strcpy(tmp + len + 1, REAL_FN_NAME_SUFFIX);
++	tmp[len] = '_';
++	ASM_FORMAT_USE_UNDERSCORE(real_name, tmp);
++
++	return get_identifier(real_name);
++}
++
++bool starts_with(const char *pre, const char *str)
++{
++	size_t lenpre = strlen(pre), lenstr = strlen(str);
++	return lenstr < lenpre ? false : memcmp(pre, str, lenpre) == 0;
++}
++
++/* Determine whether the definition of node is contained within module */
++/* This seems like rough way to do this, but didn't see an alternative, and this seems to be kind of like what other plugins have done. */
++static bool is_node_decl_in_module(tree node)
++{
++	if (node && DECL_SOURCE_LOCATION(node)) {
++		expanded_location xloc =
++			expand_location(DECL_SOURCE_LOCATION(node));
++		//in kernel, start with ./ means outside the module
++		return !(starts_with("./", xloc.file)); //in kernel
++		//return starts_with("./", xloc.file); //this test work
++	}
++
++	return false;
++}
++
++/*
++ * check if it is a trampoline function 
++ * through its section name
++ */
++bool isTrampoline(const char *secname)
++{
++	if (secname == NULL) {
++		return false;
++	}
++
++	if (strncmp(secname, FIXED_TRAMPOLINE_SECTION_PREFIX,
++		    strlen(FIXED_TRAMPOLINE_SECTION_PREFIX)) == 0) {
++		return true;
++	} else {
++		return false;
++	}
++}
++
++/*
++ * if fndecl is a init function, or a exit function, then return 1
++ * else return 0
++ */
++int isInitOrExit(tree fndecl)
++{
++	const char *secname = decl_section_name(fndecl);
++	if (secname == NULL) {
++		return 0;
++	}
++
++	//printf("This section name = %s\n", secname);
++
++	if ((strcmp(secname, ".init.text") == 0) ||
++	    (strcmp(secname, ".exit.text") == 0)) {
++		return 1;
++	} else {
++		return 0;
++	}
++}
++
++/*
++ * if fndecl is a inline function
++ */
++bool isInlineFunc(tree fndecl)
++{
++	if (fndecl == NULL_TREE) {
++		return false;
++	}
++
++	tree attrlist = DECL_ATTRIBUTES(fndecl);
++	//four attr
++	tree unused = lookup_attribute("unused", attrlist);
++	tree gnu_inline = lookup_attribute("gnu_inline", attrlist);
++	tree always_inline = lookup_attribute("always_inline", attrlist);
++	tree no_instrument_function =
++		lookup_attribute("no_instrument_function", attrlist);
++
++	if (unused == NULL_TREE || gnu_inline == NULL_TREE ||
++	    always_inline == NULL_TREE || no_instrument_function == NULL_TREE) {
++		return false;
++	} else {
++		return true;
++	}
++}
++
++/*
++ * Creates the trampoline 
++ */
++static tree create_trampoline_fn(const char *fnname)
++{
++	tree decl, resdecl, initial, proto;
++
++	/* Func decl */
++	proto = build_varargs_function_type_list(
++		void_type_node, NULL_TREE); //integer_type_node, NULL_TREE);
++	decl = build_fn_decl(fnname, proto);
++	SET_DECL_ASSEMBLER_NAME(decl, get_identifier(fnname));
++
++	/* Result */
++	resdecl = build_decl(BUILTINS_LOCATION, RESULT_DECL, NULL_TREE,
++			     void_type_node);
++	DECL_ARTIFICIAL(resdecl) = 1;
++	DECL_CONTEXT(resdecl) = decl;
++	DECL_RESULT(decl) = resdecl;
++
++	/* Initial */
++	initial = make_node(BLOCK);
++	TREE_USED(initial) = 1;
++	DECL_INITIAL(decl) = initial;
++	DECL_UNINLINABLE(decl) = 1;
++	DECL_EXTERNAL(decl) = 0;
++	DECL_PRESERVE_P(decl) = 1;
++
++	/* Func decl */
++	TREE_USED(decl) = 1;
++	TREE_PUBLIC(decl) = 1;
++	TREE_STATIC(decl) = 1;
++	DECL_ARTIFICIAL(decl) = 1;
++
++	/* Make the function */
++	push_struct_function(decl);
++	cfun->function_end_locus = BUILTINS_LOCATION;
++	gimplify_function_tree(decl);
++
++	/* Update */
++	cgraph_node::add_new_function(decl, false);
++
++	pop_cfun();
++
++	return decl;
++}
++
++static unsigned int trampoline_generation_execute()
++{
++	return 0;
++}
++
++#define PASS_NAME trampoline_generation
++#define NO_GATE
++#include "gcc-generate-gimple-pass.h"
++
++static unsigned int trampoline_filter_execute()
++{
++	return 0;
++}
++
++#define PASS_NAME trampoline_filter
++#define NO_GATE
++#include "gcc-generate-rtl-pass.h"
++
++/*
++ * construct the var name in this rule: __UNIQUE_ID_shuffle323
++ * shuffle is the symtabstr
++ * 323 is the code line
++ */
++static char *build_string_var_name(const char *symtabstr)
++{
++	char gen_str_counter[5];
++	//sprintf(gen_str_counter, "%d", generated_str_counter++);
++	sprintf(gen_str_counter, "%d", 323);
++
++	int new_str_len = strlen(generated_str_name) + strlen(symtabstr) + 5;
++	char *new_str_name = (char *)xmalloc(sizeof(char) * new_str_len);
++	strcpy(new_str_name, generated_str_name);
++	strcat(new_str_name, symtabstr);
++	strcat(new_str_name, gen_str_counter);
++
++	return new_str_name;
++}
++
++/*
++ * build a string decl
++ */
++static tree build_str_decl(tree id, const char *str)
++{
++	location_t loc = UNKNOWN_LOCATION;
++	tree decl, type, init;
++	size_t length = strlen(str);
++	type = build_array_type(char_type_node,
++				build_index_type(size_int(length)));
++	type = c_build_qualified_type(type, TYPE_QUAL_CONST);
++	decl = build_decl(loc, VAR_DECL, id, type);
++	TREE_STATIC(decl) = 1;
++	TREE_PUBLIC(decl) = 1; //local
++	DECL_PRESERVE_P(decl) = 1;
++	TREE_READONLY(decl) = 1;
++	TREE_USED(decl) = 1;
++	DECL_EXTERNAL(decl) = 0;
++	init = build_string(length + 1, str);
++	TREE_TYPE(init) = type;
++	DECL_INITIAL(decl) = init;
++	TREE_USED(decl) = 1;
++	if (current_function_decl) {
++		DECL_CONTEXT(decl) = current_function_decl;
++	}
++	finish_decl(decl, loc, init, NULL_TREE, NULL_TREE);
++
++	return decl;
++}
++
++/*
++ * build a str decl: char symtabstr[] = str
++ */
++static tree build_string_var_decl(const char *str, const char *symtabstr)
++{
++	char *var_name = build_string_var_name(symtabstr);
++	tree id = get_identifier(var_name);
++
++	tree mdecl = build_str_decl(id, str);
++
++	//printf("%s for %s in function %s\n", DECL_NAME_POINTER(mdecl), str, symtabstr);
++	//DEBUG_OUTPUT("[*]\t%s for %s in function %s\n", DECL_NAME_POINTER(mdecl), str, symtabstr);
++
++	varpool_add_new_variable(mdecl);
++	set_decl_section_name(mdecl, MODULE_INFO_SECTION_NAME);
++
++	return mdecl;
++}
++
++void add_body(char *calleename, function *fun)
++{
++	/* Get stmt! */
++	// get function entry block
++	basic_block entry = ENTRY_BLOCK_PTR_FOR_FN(fun)->next_bb;
++
++	// get the first statement
++	gimple first_stmt = gsi_stmt(gsi_start_bb(entry));
++
++	// get an iterator pointing to first basic block of the statement
++	gimple_stmt_iterator gsi = gsi_for_stmt(first_stmt);
++
++	// build the GIMPLE function call to decl by asm code
++	//int codesize = strlen("bl") + strlen(calleename) + 1;
++	int codesize = 1024;
++	char asmcode[codesize];
++	sprintf(asmcode, "\
++		sub sp, sp, #96\n\
++		stp x29, x30, [sp, #80]\n\
++		stp x0, x1, [sp, #64]\n\
++		stp x2, x3, [sp, #48]\n\
++		stp x4, x5, [sp, #32]\n\
++		stp x6, x7, [sp, #16]\n\
++		str x19, [sp]\n\
++		mov x29, sp\n\
++		adrp x19, __this_module\n\
++		add x19, x19, :lo12:__this_module\n\
++		mov x0, x19\n\
++		bl module_address_lookup_name\n\
++		mov x19, x0\n\
++		bl add_rand_curr\n\
++		ldp x0, x1, [sp, #64]\n\
++		ldp x2, x3, [sp, #48]\n\
++		ldp x4, x5, [sp, #32]\n\
++		ldp x6, x7, [sp, #16]\n\
++		bl %s\n\
++		stp x0, x1, [sp, #64]\n\
++		stp x2, x3, [sp, #48]\n\
++		stp x4, x5, [sp, #32]\n\
++		stp x6, x7, [sp, #16]\n\
++		mov x0, x19\n\
++		bl del_rand_curr\n\
++		ldp x29, x30, [sp, #80]\n\
++		ldp x0, x1, [sp, #64]\n\
++		ldp x2, x3, [sp, #48]\n\
++		ldp x4, x5, [sp, #32]\n\
++		ldp x6, x7, [sp, #16]\n\
++		ldr x19, [sp]\n\
++		add sp, sp, #96\n\
++			",
++		calleename);
++	gimple stmt = gimple_build_asm_vec(asmcode, NULL, NULL, NULL, NULL);
++	gimple_asm_set_volatile((gasm *)stmt, true);
++
++	// insert it before the statement that was passed as the first argument
++	gsi_insert_before(&gsi, stmt, GSI_NEW_STMT);
++}
++
++void gen_trampoline(void *gcc_data, void *user_data)
++{
++	if (firstTime) {
++		DEBUG_OUTPUT("[*]====================================\n", "");
++		struct function *func;
++		struct cgraph_node *node;
++		FOR_EACH_FUNCTION(node)
++		{
++			symtab_node *n = node;
++			if (!(func = DECL_STRUCT_FUNCTION(n->decl)))
++				continue;
++
++			//current tree
++			tree fndecl = func->decl;
++			const char *secname = decl_section_name(fndecl);
++			const char *fname =
++				IDENTIFIER_POINTER(DECL_ASSEMBLER_NAME(fndecl));
++
++			if (!is_node_decl_in_module(fndecl)) {
++				//printf("[*] Function '%s' defined outside this module!\n", fname);
++				//DEBUG_OUTPUT("[*] Function '%s' defined outside this module!\n", fname);
++				continue;
++			}
++
++			if (!isTrampoline(secname)) {
++				DEBUG_OUTPUT(
++					"[*]Handling normal FUNCTION '%s' in section '%s' at %s : %d \n",
++					fname, secname,
++					LOCATION_FILE(
++						func->function_start_locus),
++					LOCATION_LINE(
++						func->function_start_locus));
++				//printf("[*]Handling normal function: %s\n", fname);
++
++				// Do not process exit, init, inline function
++				if (isInitOrExit(fndecl) > 0) {
++					//this target file is the right place to set the modinfo
++					place_modinfo = true;
++				} else if (isInlineFunc(fndecl)) {
++					//do nothing
++					DEBUG_OUTPUT(
++						"[*]\tInline function, do nothing...\n",
++						"");
++				} else {
++					DEBUG_OUTPUT(
++						"[*]\tChange its function name to %s_real\n",
++						fname);
++					//printf("[*]\tChange its function name to %s_real\n", fname);
++					tree realName =
++						get_real_function_tree(fname);
++					if (!realName) {
++						DEBUG_OUTPUT(
++							"[*]!!! Change function '%s' name failed !!!\n",
++							fname);
++						//printf("[*]!!! Change function '%s' name failed !!!\n", fname);
++					} else {
++						change_decl_assembler_name(
++							fndecl, realName);
++						// make sure that this fndecl turned into local
++						//TREE_PUBLIC(fndecl) = 0;
++
++						// create a empty trampoline function for this function
++						DEBUG_OUTPUT(
++							"[*]\tCreate its trampoline now!\n",
++							"");
++						//printf("[*]\tCreate its trampoline now!\n");
++						tree tfndecl =
++							create_trampoline_fn(
++								fname);
++
++						int calleesize =
++							strlen(fname) +
++							strlen(REAL_FN_NAME_SUFFIX) +
++							1;
++						char calleename[calleesize];
++						sprintf(calleename, "%s_%s",
++							fname,
++							REAL_FN_NAME_SUFFIX);
++
++						add_body(calleename,
++							 DECL_STRUCT_FUNCTION(
++								 tfndecl));
++
++						// set this new trampoline function's section, ".trampoline.text."
++						DEBUG_OUTPUT(
++							"[*]\tSetup this trampoline %s's section to %s%s\n",
++							fname,
++							FIXED_TRAMPOLINE_SECTION_PREFIX,
++							fname);
++						//printf("[*]\tSetup this trampoline %s's section to %s%s\n", fname, FIXED_TRAMPOLINE_SECTION_PREFIX, fname);
++						int len =
++							strlen(FIXED_TRAMPOLINE_SECTION_PREFIX) +
++							strlen(fname);
++						char secname[len + 1] = { 0 };
++						snprintf(
++							secname, len + 1,
++							"%s%s",
++							FIXED_TRAMPOLINE_SECTION_PREFIX,
++							fname);
++						set_decl_section_name(tfndecl,
++								      secname);
++					}
++				}
++			}
++		}
++
++		firstTime = false;
++	}
++}
++
++/*
++ * add modinfo to modinfo section
++ */
++void update_modinfo(void *gcc_data, void *user_data)
++{
++	//add modinfo to modinfo section
++	if (place_modinfo) {
++		//printf("[*] Insert MODULE_INFO '%s' for this module!\n", "randomizable=Y");
++		DEBUG_OUTPUT("[*]Insert MODULE_INFO '%s' for this module!\n",
++			     "randomizable=Y");
++		//insert MODULE_INFO(randomizable, "Y") for this module
++		build_string_var_decl("randomizable=Y", "randomizable");
++		//make sure only one pass add this modinfo
++		place_modinfo = false;
++	}
++}
++
++/*
++ * Ieetialization function of this plugin: the very heart & soul.
++ */
++int plugin_init(struct plugin_name_args *info,
++		struct plugin_gcc_version *version)
++{
++	const char *plugin_name = info->base_name;
++	struct register_pass_info trampoline_generation_info;
++	struct register_pass_info trampoline_filter_info;
++
++	if (!plugin_default_version_check(version, &gcc_version)) {
++		error(G_("incompatible gcc/plugin versions"));
++		return 1;
++	}
++
++	// Register plugin information
++	register_callback(plugin_name, PLUGIN_INFO, NULL,
++			  &rerandom_plugin_info);
++
++	// Register gimple pass: rename to fn_real and create trampoline fn
++	trampoline_generation_info.pass = make_trampoline_generation_pass();
++	trampoline_generation_info.reference_pass_name = "ssa";
++	trampoline_generation_info.ref_pass_instance_number = 0;
++	trampoline_generation_info.pos_op =
++		PASS_POS_INSERT_AFTER; // AFTER => more optimized code
++	register_callback(plugin_name, PLUGIN_PASS_MANAGER_SETUP, NULL,
++			  &trampoline_generation_info);
++
++	// Register plugin all_passes_start, filter those redundant trampoline function
++	register_callback(plugin_name, PLUGIN_ALL_PASSES_START, gen_trampoline,
++			  NULL);
++
++	// Register the RTL pass which finds out the redundancy trampoline fn
++	trampoline_filter_info.pass = make_trampoline_filter_pass();
++	trampoline_filter_info.reference_pass_name = "final";
++	trampoline_filter_info.ref_pass_instance_number = 0;
++	trampoline_filter_info.pos_op =
++		PASS_POS_INSERT_BEFORE; // BEFORE => no assembly yet
++	register_callback(plugin_name, PLUGIN_PASS_MANAGER_SETUP, NULL,
++			  &trampoline_filter_info);
++
++	// After the all pass, we can know if this file is suitable for modinfo
++	register_callback(plugin_name, PLUGIN_ALL_PASSES_END, update_modinfo,
++			  NULL);
++
++	return 0;
++}
+diff --git a/scripts/gdb/linux/cpus.py b/scripts/gdb/linux/cpus.py
+index 008e62f3190d..15fc4626d236 100644
+--- a/scripts/gdb/linux/cpus.py
++++ b/scripts/gdb/linux/cpus.py
+@@ -16,6 +16,9 @@ import gdb
+ from linux import tasks, utils
+ 
+ 
++task_type = utils.CachedType("struct task_struct")
++
++
+ MAX_CPUS = 4096
+ 
+ 
+@@ -156,6 +159,23 @@ Note that VAR has to be quoted as string."""
+ 
+ PerCpu()
+ 
++def get_current_task(cpu):
++    task_ptr_type = task_type.get_type().pointer()
++
++    if utils.is_target_arch("x86"):
++         var_ptr = gdb.parse_and_eval("&current_task")
++         return per_cpu(var_ptr, cpu).dereference()
++    elif utils.is_target_arch("aarch64"):
++         current_task_addr = gdb.parse_and_eval("$SP_EL0")
++         if((current_task_addr >> 63) != 0):
++             current_task = current_task_addr.cast(task_ptr_type)
++             return current_task.dereference()
++         else:
++             raise gdb.GdbError("Sorry, obtaining the current task is not allowed "
++                                "while running in userspace(EL0)")
++    else:
++        raise gdb.GdbError("Sorry, obtaining the current task is not yet "
++                           "supported with this arch")
+ 
+ class LxCurrentFunc(gdb.Function):
+     """Return current task.
+@@ -167,8 +187,7 @@ number. If CPU is omitted, the CPU of the current context is used."""
+         super(LxCurrentFunc, self).__init__("lx_current")
+ 
+     def invoke(self, cpu=-1):
+-        var_ptr = gdb.parse_and_eval("&current_task")
+-        return per_cpu(var_ptr, cpu).dereference()
++        return get_current_task(cpu)
+ 
+ 
+ LxCurrentFunc()
+diff --git a/scripts/gdb/linux/dmesg.py b/scripts/gdb/linux/dmesg.py
+index a92c55bd8de5..c771831eb077 100644
+--- a/scripts/gdb/linux/dmesg.py
++++ b/scripts/gdb/linux/dmesg.py
+@@ -22,7 +22,6 @@ prb_desc_type = utils.CachedType("struct prb_desc")
+ prb_desc_ring_type = utils.CachedType("struct prb_desc_ring")
+ prb_data_ring_type = utils.CachedType("struct prb_data_ring")
+ printk_ringbuffer_type = utils.CachedType("struct printk_ringbuffer")
+-atomic_long_type = utils.CachedType("atomic_long_t")
+ 
+ class LxDmesg(gdb.Command):
+     """Print Linux kernel log buffer."""
+@@ -44,19 +43,17 @@ class LxDmesg(gdb.Command):
+         sz = prb_desc_ring_type.get_type().sizeof
+         desc_ring = utils.read_memoryview(inf, addr, sz).tobytes()
+ 
+-        # read in descriptor array
++        # read in descriptor count, size, and address
+         off = prb_desc_ring_type.get_type()['count_bits'].bitpos // 8
+         desc_ring_count = 1 << utils.read_u32(desc_ring, off)
+         desc_sz = prb_desc_type.get_type().sizeof
+         off = prb_desc_ring_type.get_type()['descs'].bitpos // 8
+-        addr = utils.read_ulong(desc_ring, off)
+-        descs = utils.read_memoryview(inf, addr, desc_sz * desc_ring_count).tobytes()
++        desc_addr = utils.read_ulong(desc_ring, off)
+ 
+-        # read in info array
++        # read in info size and address
+         info_sz = printk_info_type.get_type().sizeof
+         off = prb_desc_ring_type.get_type()['infos'].bitpos // 8
+-        addr = utils.read_ulong(desc_ring, off)
+-        infos = utils.read_memoryview(inf, addr, info_sz * desc_ring_count).tobytes()
++        info_addr = utils.read_ulong(desc_ring, off)
+ 
+         # read in text data ring structure
+         off = printk_ringbuffer_type.get_type()['text_data_ring'].bitpos // 8
+@@ -64,14 +61,11 @@ class LxDmesg(gdb.Command):
+         sz = prb_data_ring_type.get_type().sizeof
+         text_data_ring = utils.read_memoryview(inf, addr, sz).tobytes()
+ 
+-        # read in text data
++        # read in text data size and address
+         off = prb_data_ring_type.get_type()['size_bits'].bitpos // 8
+         text_data_sz = 1 << utils.read_u32(text_data_ring, off)
+         off = prb_data_ring_type.get_type()['data'].bitpos // 8
+-        addr = utils.read_ulong(text_data_ring, off)
+-        text_data = utils.read_memoryview(inf, addr, text_data_sz).tobytes()
+-
+-        counter_off = atomic_long_type.get_type()['counter'].bitpos // 8
++        text_data_addr = utils.read_ulong(text_data_ring, off)
+ 
+         sv_off = prb_desc_type.get_type()['state_var'].bitpos // 8
+ 
+@@ -92,9 +86,9 @@ class LxDmesg(gdb.Command):
+ 
+         # read in tail and head descriptor ids
+         off = prb_desc_ring_type.get_type()['tail_id'].bitpos // 8
+-        tail_id = utils.read_u64(desc_ring, off + counter_off)
++        tail_id = utils.read_atomic_long(desc_ring, off)
+         off = prb_desc_ring_type.get_type()['head_id'].bitpos // 8
+-        head_id = utils.read_u64(desc_ring, off + counter_off)
++        head_id = utils.read_atomic_long(desc_ring, off)
+ 
+         did = tail_id
+         while True:
+@@ -102,17 +96,20 @@ class LxDmesg(gdb.Command):
+             desc_off = desc_sz * ind
+             info_off = info_sz * ind
+ 
++            desc = utils.read_memoryview(inf, desc_addr + desc_off, desc_sz).tobytes()
++
+             # skip non-committed record
+-            state = 3 & (utils.read_u64(descs, desc_off + sv_off +
+-                                        counter_off) >> desc_flags_shift)
++            state = 3 & (utils.read_atomic_long(desc, sv_off) >> desc_flags_shift)
+             if state != desc_committed and state != desc_finalized:
+                 if did == head_id:
+                     break
+                 did = (did + 1) & desc_id_mask
+                 continue
+ 
+-            begin = utils.read_ulong(descs, desc_off + begin_off) % text_data_sz
+-            end = utils.read_ulong(descs, desc_off + next_off) % text_data_sz
++            begin = utils.read_ulong(desc, begin_off) % text_data_sz
++            end = utils.read_ulong(desc, next_off) % text_data_sz
++
++            info = utils.read_memoryview(inf, info_addr + info_off, info_sz).tobytes()
+ 
+             # handle data-less record
+             if begin & 1 == 1:
+@@ -125,16 +122,17 @@ class LxDmesg(gdb.Command):
+                 # skip over descriptor id
+                 text_start = begin + utils.get_long_type().sizeof
+ 
+-                text_len = utils.read_u16(infos, info_off + len_off)
++                text_len = utils.read_u16(info, len_off)
+ 
+                 # handle truncated message
+                 if end - text_start < text_len:
+                     text_len = end - text_start
+ 
+-                text = text_data[text_start:text_start + text_len].decode(
+-                    encoding='utf8', errors='replace')
++                text_data = utils.read_memoryview(inf, text_data_addr + text_start,
++                                                  text_len).tobytes()
++                text = text_data[0:text_len].decode(encoding='utf8', errors='replace')
+ 
+-            time_stamp = utils.read_u64(infos, info_off + ts_off)
++            time_stamp = utils.read_u64(info, ts_off)
+ 
+             for line in text.splitlines():
+                 msg = u"[{time:12.6f}] {line}\n".format(
+diff --git a/scripts/gdb/linux/symbols.py b/scripts/gdb/linux/symbols.py
+index 1be9763cf8bb..8f16aedf231f 100644
+--- a/scripts/gdb/linux/symbols.py
++++ b/scripts/gdb/linux/symbols.py
+@@ -99,8 +99,18 @@ lx-symbols command."""
+             attrs[n]['battr']['attr']['name'].string(): attrs[n]['address']
+             for n in range(int(sect_attrs['nsections']))}
+         args = []
+-        for section_name in [".data", ".data..read_mostly", ".rodata", ".bss",
+-                             ".text", ".text.hot", ".text.unlikely"]:
++        target_sections = [".data", ".data..read_mostly", ".rodata", ".bss",
++                             ".text", ".text.hot", ".text.unlikely"]
++        target_section_exclude = [ ".init", ".text.ftrace_trampoline"]
++        target_section_include = [ ".text", ".data", ".rodata"]
++
++        for section_name in section_name_to_address.keys():
++            if True in [section_name.startswith(x) for x in target_section_exclude] or section_name in target_sections:
++                continue
++            if True in [section_name.startswith(x) for x in target_section_include] and section_name_to_address.get(section_name):
++                target_sections.append(section_name)
++
++        for section_name in target_sections:
+             address = section_name_to_address.get(section_name)
+             if address:
+                 args.append(" -s {name} {addr}".format(
+diff --git a/scripts/gdb/linux/utils.py b/scripts/gdb/linux/utils.py
+index ff7c1799d588..1553f68716cc 100644
+--- a/scripts/gdb/linux/utils.py
++++ b/scripts/gdb/linux/utils.py
+@@ -35,13 +35,12 @@ class CachedType:
+ 
+ 
+ long_type = CachedType("long")
+-
++atomic_long_type = CachedType("atomic_long_t")
+ 
+ def get_long_type():
+     global long_type
+     return long_type.get_type()
+ 
+-
+ def offset_of(typeobj, field):
+     element = gdb.Value(0).cast(typeobj)
+     return int(str(element[field].address).split()[0], 16)
+@@ -129,6 +128,17 @@ def read_ulong(buffer, offset):
+     else:
+         return read_u32(buffer, offset)
+ 
++atomic_long_counter_offset = atomic_long_type.get_type()['counter'].bitpos
++atomic_long_counter_sizeof = atomic_long_type.get_type()['counter'].type.sizeof
++
++def read_atomic_long(buffer, offset):
++    global atomic_long_counter_offset
++    global atomic_long_counter_sizeof
++
++    if atomic_long_counter_sizeof == 8:
++        return read_u64(buffer, offset + atomic_long_counter_offset)
++    else:
++        return read_u32(buffer, offset + atomic_long_counter_offset)
+ 
+ target_arch = None
+ 
+diff --git a/scripts/module_fg.lds.S b/scripts/module_fg.lds.S
+index 437cf03736d8..c6fd8b9c1778 100644
+--- a/scripts/module_fg.lds.S
++++ b/scripts/module_fg.lds.S
+@@ -59,6 +59,17 @@ SECTIONS {
+ #if defined (CONFIG_MODULE_FG_KASLR)
+ 	.text : {
+ 		*(TEXT_MAIN_MODULE)
++#ifdef CONFIG_MODULE_FG_KASLR_GDB_TEXT
++		/*
++		 * Force linker output .text section even if nothing contains here.
++		 * GDB will crash when loading symbols from kernel object with
++		 * no .text section even without specify `-s .text <address>` at symbol
++		 * loading.
++		 * See GNU ld online manuals:
++		 * <https://sourceware.org/binutils/docs/ld/Output-Section-Attributes.html>
++		 */
++		. = . ;
++#endif
+  	}
+  #endif
+ 
+-- 
+2.34.1
+
