@@ -1,0 +1,21 @@
+I-KASLR,,Randomize BFQ,Randomize SCSI,Randomize Both
+1 thread,Linux,,,47
+,NoRand,,,48
+,1ms,44,44,42
+,5ms,45,43,42
+,50ms,48,44,44
+4 thread,Linux,,,147
+,NoRand,,,143
+,1ms,132,128,102
+,5ms,139,133,128
+,50ms,146,143,140
+8 thread,Linux,,,220
+,NoRand,,,213
+,1ms,210,208,200
+,5ms,212,211,205
+,50ms,223,220,218
+16 thread,Linux,,,289
+,NoRand,,,285
+,1ms,250,233,230
+,5ms,266,256,246
+,50ms,288,285,283

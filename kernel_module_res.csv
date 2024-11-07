@@ -1,0 +1,12 @@
+Kernel Module,Exported Functions,Internal Address-Taken Functions,Internal Non-Address-Taken Functions,Total Functions,Internal Function Ratio,Execution Time Ratio,Execution Time Ratio 2,Address Verification
+rc-fusionhdtv-mce.ko,2,2,4,8,0.75,0.013,0.065,0.013
+gpucc-sa8775p.ko,2,3,4,9,0.777777778,0.019,0.0644,0.022
+reset-qcom-pdc.ko,2,5,3,10,0.8,0.015,0.063,0.012
+dwmac-visconti.ko,3,7,17,27,0.888888889,0.009,0.091,0.014
+icc-bwmon.ko,6,4,17,27,0.777777778,0.021,0.0945,0.013
+rtc-fsl-ftm-alarm.ko,8,9,22,39,0.794871795,0.032,0.132,0.012
+macvtap.ko,15,11,20,46,0.673913043,0.066,0.2024,0.019
+phy-j721e-wiz.ko,9,14,28,51,0.823529412,0.021,0.119,0.018
+usb_f_fs.ko,28,15,21,64,0.5625,0.09,0.205,0.015
+gpu-sched.ko,4,34,42,80,0.95,0.024,0.2,0.025
+Total,79,,,361,,,,
